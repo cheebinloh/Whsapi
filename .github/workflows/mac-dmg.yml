@@ -14,6 +14,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - run: npm install dmg-license --no-save # darwin-only dep, absent from the Windows-made lockfile
       - run: node scripts/make-icon.cjs && npx electron-builder --mac dmg --arm64 --x64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # unsigned build, no Apple cert needed
