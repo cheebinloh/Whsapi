@@ -1,0 +1,18 @@
+name: Build macOS DMG
+on: workflow_dispatch
+jobs:
+  dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/make-icon.cjs && npx electron-builder --mac dmg --arm64 --x64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false" # unsigned build, no Apple cert needed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhatsApp-Server-dmg
+          path: dist-electron/*.dmg

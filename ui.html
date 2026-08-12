@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhatsApp Server</title>
+<style>
+  :root {
+    --rail: #202C33;
+    --bg: #111B21;
+    --header: #202C33;
+    --chat-bg: #0B141A;
+    --incoming: #202C33;
+    --outgoing: #005C4B;
+    --ink: #E9EDEF;
+    --muted: #8696A0;
+    --accent: #00A884;
+    --accent-deep: #008069;
+    --wa-green: #25D366;
+    --hover: #202C33;
+    --active: #2A3942;
+    --line: rgba(134,150,160,.15);
+    --danger: #F15C6D;
+  }
+  /* WhatsApp light theme */
+  :root[data-theme="light"] {
+    --rail: #F0F2F5;
+    --bg: #FFFFFF;
+    --header: #F0F2F5;
+    --chat-bg: #EFEAE2;
+    --incoming: #FFFFFF;
+    --outgoing: #D9FDD3;
+    --ink: #111B21;
+    --muted: #667781;
+    --hover: #F5F6F6;
+    --active: #E8EBEE;
+    --line: rgba(17,27,33,.12);
+  }
+  :root[data-theme="light"] .msg .t { color: rgba(17,27,33,.45); }
+  :root[data-theme="light"] .msg .who .wnum { color: rgba(17,27,33,.45); }
+  :root[data-theme="light"] .vbtn { background: rgba(17,27,33,.08); color: var(--ink); }
+  :root[data-theme="light"] .vseek { background: rgba(17,27,33,.25); }
+  :root[data-theme="light"] .vtime { color: rgba(17,27,33,.5); }
+  :root[data-theme="light"] .msg a.doc { background: rgba(17,27,33,.05); }
+  :root[data-theme="light"] .msg a.doc .arrow { border-color: rgba(17,27,33,.4); }
+  :root[data-theme="light"] #msgs {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cg fill='none' stroke='%23111B21' stroke-opacity='.05' stroke-width='1.6'%3E%3Ccircle cx='40' cy='40' r='11'/%3E%3Cpath d='M180 30l8 14h-16z'/%3E%3Crect x='110' y='95' width='20' height='20' rx='5'/%3E%3Cpath d='M40 170q10-14 20 0t20 0'/%3E%3Ccircle cx='210' cy='150' r='7'/%3E%3Cpath d='M150 205l7 7m0-7l-7 7'/%3E%3Cpath d='M230 220q-12 4-10 16'/%3E%3Ccircle cx='90' cy='235' r='10'/%3E%3C/g%3E%3C/svg%3E"); }
+  :root[data-theme="light"] .code { background: #F0F2F5; }
+  * { margin: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--ink); font: 14.5px/1.4 "Segoe UI", system-ui, sans-serif; }
+  .mono { font-family: Consolas, ui-monospace, monospace; }
+
+  input, select { background: var(--header); color: var(--ink); border: 0; border-radius: 8px; padding: 9px 12px; font: inherit; width: 100%; }
+  select { cursor: pointer; }
+  input:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input::placeholder { color: var(--muted); }
+  button { background: var(--accent-deep); color: #fff; border: 0; border-radius: 24px;
+           padding: 10px 22px; font: 600 14px "Segoe UI", system-ui, sans-serif; cursor: pointer; transition: background .15s; }
+  button:hover { background: var(--accent); }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button.ghost:hover { background: rgba(0,168,132,.08); }
+  button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  button.danger:hover { background: rgba(241,92,109,.08); }
+
+  /* ---------- login ---------- */
+  #login { height: 100%; display: flex; align-items: center; justify-content: center;
+           background: linear-gradient(180deg, var(--accent-deep) 0 220px, var(--bg) 220px); }
+  #login form { background: var(--header); border-radius: 12px; padding: 40px 44px; width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+  #login h1 { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+  #login p { color: var(--muted); margin-bottom: 20px; }
+  #login .err { color: var(--danger); margin-top: 12px; min-height: 1.2em; font-size: 13px; }
+  #login button { width: 100%; margin-top: 18px; }
+  #login input { background: var(--active); }
+  .powered { color: var(--muted); font-size: 12px; letter-spacing: .08em; text-align: center; margin-top: 20px; }
+  .powered b { color: var(--accent); font-weight: 700; }
+
+  /* ---------- app frame: rail | list | main ---------- */
+  #app { display: none; height: 100%; }
+  #app.on { display: flex; }
+
+  #rail { width: 64px; background: var(--rail); border-right: 1px solid var(--line);
+          display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 6px; flex: none; }
+  .ric { width: 44px; height: 44px; border-radius: 50%; background: none; padding: 0; display: flex;
+         align-items: center; justify-content: center; color: var(--muted); }
+  .ric:hover { background: var(--active); color: var(--ink); }
+  .ric.on { background: var(--active); color: var(--wa-green); }
+  .ric svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #rail .spacer { flex: 1; }
+  #rail .avatar { width: 38px; height: 38px; cursor: pointer; margin-top: 6px; }
+
+  #side { width: 400px; min-width: 300px; background: var(--bg); border-right: 1px solid var(--line);
+          display: flex; flex-direction: column; }
+  #side > header { padding: 16px 20px 6px; display: flex; align-items: center; justify-content: space-between; }
+  #side > header h1 { font-size: 20px; font-weight: 700; }
+  #me { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: none; }
+  .dot.ok { background: var(--wa-green); }
+
+  #search { padding: 6px 14px 4px; }
+  #search input { padding: 8px 14px; font-size: 13.5px; }
+  #filters { display: flex; gap: 8px; padding: 8px 14px 10px; }
+  .pill { background: var(--header); color: var(--muted); border: 0; border-radius: 16px; padding: 5px 14px;
+          font: 500 12.5px "Segoe UI", system-ui, sans-serif; }
+  .pill:hover { background: var(--active); color: var(--ink); }
+  .pill.on { background: rgba(0,168,132,.22); color: var(--wa-green); }
+
+  #chatlist { flex: 1; overflow-y: auto; }
+  #chatlist::-webkit-scrollbar, #msgs::-webkit-scrollbar, .page::-webkit-scrollbar { width: 6px; }
+  #chatlist::-webkit-scrollbar-thumb, #msgs::-webkit-scrollbar-thumb, .page::-webkit-scrollbar-thumb { background: rgba(134,150,160,.3); border-radius: 3px; }
+
+  .chat { padding: 0 12px 0 16px; cursor: pointer; display: flex; gap: 14px; align-items: center; border-radius: 10px; margin: 0 6px; }
+  .chat:hover { background: var(--hover); }
+  .chat.on { background: var(--active); }
+  .avatar { width: 49px; height: 49px; border-radius: 50%; flex: none; object-fit: cover; background: var(--active); }
+  .chat .body { flex: 1; min-width: 0; padding: 11px 0; }
+  .chat .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .chat .name { font-size: 15.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat .time { color: var(--muted); font-size: 11px; flex: none; }
+  .chat.on .time, .chat .top .time.new { color: var(--wa-green); }
+  .chat .preview { color: var(--muted); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .check { color: #53BDEB; font-size: 12px; }
+
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--chat-bg); }
+  .view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .view.on { display: flex; }
+
+  /* ---------- conversation ---------- */
+  #convhead { padding: 10px 20px; background: var(--header); display: flex; align-items: center; gap: 14px; min-height: 62px; z-index: 2; }
+  #convhead .avatar { width: 42px; height: 42px; }
+  #convhead .name { font-weight: 600; font-size: 16px; }
+  #convhead .sub { color: var(--muted); font-size: 12.5px; }
+  #back { display: none; background: none; border: 0; color: var(--muted); font-size: 20px; padding: 0 6px 0 0; cursor: pointer; }
+
+  #msgs { flex: 1; overflow-y: auto; padding: 24px 9% 20px; display: flex; flex-direction: column; gap: 3px;
+          background-color: var(--chat-bg);
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cg fill='none' stroke='%23E9EDEF' stroke-opacity='.028' stroke-width='1.6'%3E%3Ccircle cx='40' cy='40' r='11'/%3E%3Cpath d='M180 30l8 14h-16z'/%3E%3Crect x='110' y='95' width='20' height='20' rx='5'/%3E%3Cpath d='M40 170q10-14 20 0t20 0'/%3E%3Ccircle cx='210' cy='150' r='7'/%3E%3Cpath d='M150 205l7 7m0-7l-7 7'/%3E%3Cpath d='M230 220q-12 4-10 16'/%3E%3Ccircle cx='90' cy='235' r='10'/%3E%3C/g%3E%3C/svg%3E"); }
+  .msg { max-width: 62%; padding: 6px 9px 8px; border-radius: 10px; background: var(--incoming); align-self: flex-start;
+         overflow-wrap: break-word; box-shadow: 0 1px 1px rgba(0,0,0,.3); font-size: 14.2px; }
+  .msg.mine { background: var(--outgoing); align-self: flex-end; }
+  .msg .who { font-size: 12.5px; font-weight: 600; margin-bottom: 2px; display: flex; gap: 14px; justify-content: space-between; align-items: baseline; }
+  .msg .who .wnum { color: var(--muted); font-weight: 400; font-size: 11.5px; }
+  .msg .t { float: right; font-size: 11px; color: rgba(233,237,239,.5); margin: 8px -2px -4px 10px; }
+  .msg .media-label { font-style: italic; color: var(--muted); }
+  .msg img.m, .msg video { max-width: 340px; max-height: 400px; border-radius: 8px; display: block; margin: -2px -5px 4px; width: calc(100% + 10px); object-fit: cover; }
+  .msg a.doc { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 10px;
+               background: rgba(0,0,0,.18); border-radius: 8px; padding: 10px 12px; margin: 2px 0 4px; min-width: 230px; }
+  .msg a.doc:hover { background: rgba(0,0,0,.28); }
+  .msg a.doc .arrow { margin-left: auto; opacity: .7; border: 1.5px solid rgba(233,237,239,.6); border-radius: 50%;
+                      width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; flex: none; }
+  .voice { display: flex; align-items: center; gap: 10px; min-width: 250px; padding: 8px 4px 6px; }
+  .vbtn { width: 34px; height: 34px; border-radius: 50%; padding: 0; font-size: 13px; background: rgba(233,237,239,.12);
+          color: var(--ink); flex: none; display: flex; align-items: center; justify-content: center; }
+  .vbtn:hover { background: rgba(233,237,239,.2); }
+  .vseek { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
+           background: rgba(233,237,239,.3); padding: 0; cursor: pointer; }
+  .vseek::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: var(--accent); }
+  .vtime { font-size: 11px; color: rgba(233,237,239,.6); min-width: 32px; text-align: right; }
+
+  #composer { display: flex; gap: 10px; padding: 10px 18px; background: var(--header); align-items: center; }
+  #composer input { flex: 1; background: var(--active); border-radius: 10px; padding: 11px 14px; }
+  #composer button { border-radius: 50%; width: 44px; height: 44px; padding: 0; font-size: 17px; flex: none; }
+
+  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); gap: 10px;
+           border-bottom: 6px solid var(--accent-deep); }
+  .empty .big { font-size: 30px; font-weight: 300; color: var(--ink); opacity: .85; }
+
+  /* ---------- full pages (chat list hidden, full width) ---------- */
+  #app.fullpage #side { display: none; }
+
+  /* ---------- not linked yet: lock to the onboarding (link + settings only) ---------- */
+  #app.locked #side { display: none; }
+  #app.locked #rail .ric[data-view="chats"],
+  #app.locked #rail .ric[data-view="docs"],
+  #app.locked #rail .avatar { display: none; }
+  .setup-banner { background: rgba(0,168,132,.12); border: 1px solid var(--accent); border-radius: 12px;
+                  padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .setup-banner .txt { flex: 1; min-width: 240px; }
+  .setup-banner b { color: var(--accent); }
+  .setup-banner .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .page { flex: 1; overflow-y: auto; background: var(--bg); }
+  .page-head { position: relative; overflow: hidden; padding: 54px 8% 46px;
+               background: linear-gradient(135deg, #00A884 0%, #008069 45%, #024D3E 100%); }
+  .page-head h2 { font-size: 36px; font-weight: 700; color: #fff; letter-spacing: -.5px; }
+  .page-head p { color: rgba(255,255,255,.85); margin-top: 8px; font-size: 14.5px; max-width: 720px; }
+  .page-head::after { content: '⚡'; position: absolute; right: 4%; top: 50%; transform: translateY(-50%) rotate(12deg);
+                      font-size: 150px; opacity: .10; pointer-events: none; }
+  .statrow { display: flex; gap: 14px; margin-top: 22px; flex-wrap: wrap; }
+  .stat { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.18); border-radius: 12px;
+          padding: 10px 18px; color: #fff; font-size: 13px; backdrop-filter: blur(4px); }
+  .stat b { display: block; font-size: 20px; font-weight: 700; }
+  .page-inner { max-width: 1100px; margin: 0 auto; padding: 36px 6% 70px; }
+  .section { background: var(--header); border: 1px solid var(--line); border-radius: 14px;
+             padding: 26px 30px; margin-bottom: 20px; box-shadow: 0 2px 12px rgba(0,0,0,.25); }
+  .section h3 { font-size: 17px; font-weight: 700; color: var(--accent); margin-bottom: 4px; display: flex; align-items: center; gap: 10px; }
+  .section h3::before { content: ''; width: 4px; height: 18px; border-radius: 2px; background: var(--accent); }
+  .section .desc { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .section input { background: var(--active); }
+  label { display: block; color: var(--muted); font-size: 13px; margin: 16px 0 6px; }
+  .row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+  .ok-note { color: var(--accent); font-size: 13px; margin-top: 10px; min-height: 1.2em; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 26px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  .code { background: var(--chat-bg); border-radius: 8px; padding: 14px 16px; margin: 8px 0;
+          font: 13px/1.55 Consolas, ui-monospace, monospace; overflow-x: auto; white-space: pre; color: var(--ink); }
+  /* code syntax colors (VS Code dark) */
+  .tok-c { color: #6A9955; font-style: italic; }
+  .tok-s { color: #CE9178; }
+  .tok-v { color: #9CDCFE; }
+  .tok-k { color: #C586C0; }
+  .tok-n { color: #B5CEA8; }
+  .tok-f { color: #DCDCAA; }
+  :root[data-theme="light"] .tok-c { color: #008000; }
+  :root[data-theme="light"] .tok-s { color: #A31515; }
+  :root[data-theme="light"] .tok-v { color: #001080; }
+  :root[data-theme="light"] .tok-k { color: #AF00DB; }
+  :root[data-theme="light"] .tok-n { color: #098658; }
+  :root[data-theme="light"] .tok-f { color: #795E26; }
+  .page p.doc { color: var(--muted); font-size: 13.5px; margin: 6px 0; }
+  .kbd { background: var(--active); border-radius: 4px; padding: 1px 6px; font-family: Consolas, monospace; font-size: 12.5px; }
+  #linkcard { text-align: center; padding: 40px 20px; }
+  #linkcard img { border-radius: 10px; background: #fff; padding: 14px; margin: 18px auto; display: block; }
+  #linkcard h3 { font-size: 20px; color: var(--ink); font-weight: 500; }
+  #linkcard p { color: var(--muted); margin-top: 8px; }
+
+  /* ---------- mobile ---------- */
+  @media (max-width: 720px) {
+    #rail { width: 52px; }
+    #side { width: calc(100% - 52px); }
+    #app.chat-open #side { display: none; }
+    #app:not(.chat-open) #main { display: none; }
+    #back { display: inline-block; }
+    .msg { max-width: 85%; }
+    #msgs { padding: 16px 4%; }
+    .page-head, .page-inner { padding-left: 5%; padding-right: 5%; }
+  }
+</style>
+</head>
+<body>
+
+<div id="login" style="display:none">
+  <form onsubmit="doLogin(event)">
+    <h1>WhatsApp Server</h1>
+    <p>Enter your API key to open the dashboard.</p>
+    <input id="keyin" type="password" placeholder="API key" autocomplete="current-password">
+    <div class="err" id="loginerr"></div>
+    <button>Open dashboard</button>
+    <div class="powered">Powered by <b>JSNDEV</b></div>
+  </form>
+</div>
+
+<div id="app">
+  <nav id="rail">
+    <button class="ric on" data-view="chats" title="Chats" onclick="showView('chats')">
+      <svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+    </button>
+    <button class="ric" data-view="link" title="Link device" onclick="showView('link')">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17.5 17.5h.01M20 20v.01"/></svg>
+    </button>
+    <div class="spacer"></div>
+    <button class="ric" data-view="docs" title="API docs" onclick="showView('docs')">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+    </button>
+    <button class="ric" data-view="settings" title="Settings" onclick="showView('settings')">
+      <svg viewBox="0 0 24 24"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="10" cy="7" r="2.2" fill="var(--rail)"/><circle cx="15" cy="12" r="2.2" fill="var(--rail)"/><circle cx="8" cy="17" r="2.2" fill="var(--rail)"/></svg>
+    </button>
+    <img class="avatar" id="myavatar" alt="me" title="" src="" onclick="showView('settings')">
+  </nav>
+
+  <div id="side">
+    <header>
+      <h1 id="sidetitle">Chats</h1>
+      <span id="me"><span class="dot" id="dot"></span><span id="metext">connecting…</span></span>
+    </header>
+    <div id="search"><input placeholder="Search or start a new chat" oninput="renderChats(this.value)"></div>
+    <div id="filters">
+      <button class="pill on" data-f="all" onclick="setFilter('all')">All</button>
+      <button class="pill" data-f="contacts" onclick="setFilter('contacts')">Contacts</button>
+      <button class="pill" data-f="groups" onclick="setFilter('groups')">Groups</button>
+    </div>
+    <div id="chatlist"></div>
+  </div>
+
+  <div id="main">
+    <div class="view on" id="view-chats">
+      <div class="empty" id="noconv">
+        <div class="big">WhatsApp Server</div>
+        <div>Select a chat to view the conversation.</div>
+        <div class="powered">Powered by <b>JSNDEV</b></div>
+      </div>
+      <div class="view" id="conv" style="flex:1">
+        <div id="convhead">
+          <button id="back" onclick="closeChat()">←</button>
+          <img class="avatar" id="convavatar" alt="" src="">
+          <div>
+            <div class="name" id="convname"></div>
+            <div class="sub mono" id="convsub"></div>
+          </div>
+        </div>
+        <div id="msgs"></div>
+        <form id="composer" onsubmit="sendMsg(event)">
+          <input id="msgin" placeholder="Type a message" autocomplete="off">
+          <button title="Send">➤</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="view" id="view-link">
+      <div class="page">
+        <div class="page-head"><h2>Link device</h2><p>Connect this API to your WhatsApp account.</p></div>
+        <div class="page-inner"><div class="section" id="linkcard"></div><div class="powered">Powered by <b>JSNDEV</b></div></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-settings">
+      <div class="page">
+        <div class="page-head"><h2>Settings</h2><p>Everything about how WhatsApp Server stores, syncs and serves your data.</p><div class="statrow" id="stats"></div></div>
+        <div class="page-inner">
+
+          <div class="setup-banner" id="setupbanner" style="display:none">
+            <div class="txt">
+              <b>Welcome — set things up first</b>
+              <div class="sub">Choose how many days to keep, notifications, the server port and webhook below. When you're ready, link your WhatsApp account.</div>
+            </div>
+            <button onclick="localStorage.setItem('setupDone','1');showView('link')">Continue to link device →</button>
+          </div>
+
+          <div class="section">
+            <h3>Appearance</h3>
+            <div class="desc">Theme for the whole app.</div>
+            <div class="row" style="margin-top:4px">
+              <button class="ghost" id="theme-dark" onclick="applyTheme('dark')">🌙 Dark</button>
+              <button class="ghost" id="theme-light" onclick="applyTheme('light')">☀️ Light</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <h3>Notifications</h3>
+            <div class="desc">Alert when a new message arrives while the app is running.</div>
+            <label>Method</label>
+            <div class="row" style="margin-top:4px" id="notifmethods">
+              <button class="ghost" data-m="off" onclick="setNotifMethod('off')">Off</button>
+              <button class="ghost" data-m="banner" onclick="setNotifMethod('banner')">Banner only</button>
+              <button class="ghost" data-m="sound" onclick="setNotifMethod('sound')">Sound only</button>
+              <button class="ghost" data-m="both" onclick="setNotifMethod('both')">Banner + sound</button>
+            </div>
+            <div class="grid2">
+              <div>
+                <label for="notifsound">Sound</label>
+                <div class="row" style="margin-top:0">
+                  <select id="notifsound" style="flex:1" onchange="setNotifSound(this.value)">
+                    <option value="beep">Beep</option>
+                    <option value="chime">Chime</option>
+                    <option value="pop">Pop</option>
+                  </select>
+                  <button class="ghost" type="button" onclick="playSound($('notifsound').value)">Test</button>
+                </div>
+              </div>
+            </div>
+            <div class="ok-note" id="notifnote"></div>
+          </div>
+
+          <div class="section">
+            <h3>Messages</h3>
+            <div class="desc">How much history is kept and how media is downloaded.</div>
+            <div class="grid2">
+              <div>
+                <label for="keepdays">Keep messages for (days) — older ones are deleted, applies immediately</label>
+                <input id="keepdays" type="number" min="1">
+              </div>
+              <div>
+                <label for="mediadays">Auto-download media from the last (days) — older media loads when opened</label>
+                <input id="mediadays" type="number" min="1">
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <h3>Integration</h3>
+            <div class="desc">Connect the API to your own applications.</div>
+            <label for="wh">Webhook URL — every incoming message is POSTed here as JSON (empty = disabled)</label>
+            <input id="wh" placeholder="http://localhost/my_app/receive.php">
+            <div class="grid2">
+              <div>
+                <label for="port">Server port — takes effect after restart</label>
+                <input id="port" type="number" min="1" max="65535">
+              </div>
+              <div>
+                <label>API key — use as <span class="kbd">X-API-Key</span> header or <span class="kbd">?key=</span></label>
+                <div class="row" style="margin-top:0">
+                  <input class="mono" id="apikeyshow" readonly style="flex:1">
+                  <button class="ghost" type="button" onclick="navigator.clipboard.writeText(KEY);this.textContent='Copied';setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
+                </div>
+              </div>
+            </div>
+            <div class="row"><button onclick="saveSettings()">Save settings</button></div>
+            <div class="ok-note" id="setnote"></div>
+          </div>
+
+          <div class="section">
+            <h3>Data sync</h3>
+            <div class="desc">Refreshes group names, then re-runs profile picture and media downloads.</div>
+            <div class="row"><button class="ghost" onclick="syncNow()">Sync data again</button></div>
+            <div class="ok-note" id="syncnote"></div>
+          </div>
+
+          <div class="section">
+            <h3>Account</h3>
+            <div class="desc">Dashboard access and the linked WhatsApp device.</div>
+            <div class="row">
+              <button class="danger" onclick="unlink()">Unlink WhatsApp account</button>
+            </div>
+          </div>
+
+          <div class="powered">Powered by <b>JSNDEV</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="view" id="view-docs">
+      <div class="page">
+        <div class="page-head"><h2>API documentation</h2><p>Base URL <span class="mono" id="docbase"></span> — every request needs the API key as <span class="mono">X-API-Key</span> header or <span class="mono">?key=</span> query parameter.</p></div>
+        <div class="page-inner">
+
+          <div class="section">
+            <h3>Send a message</h3>
+            <pre class="code">POST /send
+{"to": "60123456789", "text": "hello"}
+
+POST /send   (image by URL, optional caption)
+{"to": "60123456789", "imageUrl": "https://example.com/pic.jpg", "caption": "look"}</pre>
+            <p class="doc">"to" accepts a bare number or a group id like <span class="kbd">1203630...@g.us</span>. Returns <span class="kbd">{"ok":true,"id":"...","to":"..."}</span>.</p>
+          </div>
+
+          <div class="section">
+            <h3>Read messages</h3>
+            <pre class="code">GET /messages?limit=100
+  after=&lt;seq&gt;               only messages after this cursor (for polling)
+  chat=&lt;number|group id&gt;    one conversation
+  from=&lt;number&gt;             one sender
+  q=&lt;text&gt;                  full-text search
+  order=desc                newest first (default oldest first)
+  limit=1..500              default 100</pre>
+            <p class="doc">Each message: <span class="kbd">{seq, id, from, chat, isGroup, fromMe, name, type, text, timestamp, hasMedia}</span>. <span class="kbd">from</span> is a plain number ("me" for your own messages). Poll by repeating with <span class="kbd">after=&lt;last cursor&gt;</span>.</p>
+          </div>
+
+          <div class="section">
+            <h3>Chats</h3>
+            <pre class="code">GET /chats</pre>
+            <p class="doc">One row per conversation, newest first, with resolved names and the last message.</p>
+          </div>
+
+          <div class="section">
+            <h3>Media &amp; pictures</h3>
+            <pre class="code">GET /media/&lt;message id&gt;              image / voice / video / document file
+GET /avatar/&lt;number or group id&gt;     profile picture (SVG placeholder if none)</pre>
+            <p class="doc">Media downloads from WhatsApp on first request and is cached on disk afterwards.</p>
+          </div>
+
+          <div class="section">
+            <h3>Connection</h3>
+            <pre class="code">GET  /status      state, account, sync progress, database stats
+GET  /qr          QR page for linking (open in browser)
+GET  /qr.json     QR as JSON {state, user, qr: dataUrl}
+POST /logout      unlink; body {"clearData": true} also wipes the local database
+POST /sync        re-run group name / avatar / media sync</pre>
+          </div>
+
+          <div class="section">
+            <h3>Settings</h3>
+            <pre class="code">GET  /settings
+POST /settings    {"webhookUrl": "...", "keepDays": 90, "mediaSyncDays": 30, "port": 3000}</pre>
+          </div>
+
+          <div class="section">
+            <h3>Message format</h3>
+            <p class="doc">Every message — from <span class="kbd">GET /messages</span> and from the webhook — has this exact shape:</p>
+            <pre class="code">{
+  "seq": 10412,                     // database cursor (not sent to webhooks)
+  "id": "3EB0F60D6CE9DBEAB93486",   // WhatsApp message id, use it for /media/&lt;id&gt;
+  "from": "60123456789",            // sender's phone number, or "me" if you sent it
+  "chat": "60123456789",            // conversation: a number, or "1203...@g.us" for groups
+  "isGroup": false,
+  "fromMe": false,
+  "name": "John Tan",               // sender's name (contact book / display name)
+  "type": "conversation",           // conversation | extendedTextMessage | imageMessage |
+                                    // videoMessage | audioMessage | documentMessage | stickerMessage
+  "text": "hello",                  // message text, caption, or document filename
+  "timestamp": 1784708117000,       // milliseconds — divide by 1000 for PHP date()
+  "hasMedia": false                 // true = a file is downloadable at /media/&lt;id&gt;
+}</pre>
+            <p class="doc">Server states from <span class="kbd">GET /status</span>: <span class="kbd">connected</span> (ready to send), <span class="kbd">waiting_for_qr_scan</span> (needs linking), <span class="kbd">connecting</span>, <span class="kbd">reconnecting</span>, <span class="kbd">logged_out</span>.</p>
+            <p class="doc">Errors: <span class="kbd">401</span> wrong/missing API key · <span class="kbd">400</span> bad input (e.g. invalid "to") · <span class="kbd">503</span> WhatsApp not connected · <span class="kbd">502</span> media download failed. Error body is always <span class="kbd">{"error": "reason"}</span>.</p>
+          </div>
+
+          <div class="section">
+            <h3>PHP — the helper (use it for every call)</h3>
+            <pre class="code">&lt;?php
+// wa.php — include this once, then every API call is one line
+define('WA_URL', 'http://localhost:3210');   // installed app port; dev server uses 3000
+define('WA_KEY', 'YOUR_API_KEY');            // Settings -&gt; Integration -&gt; API key
+
+function wa($method, $path, $data = null) {
+    $ch = curl_init(WA_URL . $path);
+    $headers = ['X-API-Key: ' . WA_KEY];
+    if ($data !== null) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        $headers[] = 'Content-Type: application/json';
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST  => $method,
+        CURLOPT_HTTPHEADER     => $headers,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 60,
+    ]);
+    $res = curl_exec($ch);
+    if ($res === false) throw new Exception('WhatsApp Server unreachable: ' . curl_error($ch));
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $json = json_decode($res, true);
+    if ($code >= 400) throw new Exception($json['error'] ?? ('HTTP ' . $code));
+    return $json;
+}</pre>
+          </div>
+
+          <div class="section">
+            <h3>PHP — check server status before sending</h3>
+            <pre class="code">$status = wa('GET', '/status');
+
+if ($status['state'] !== 'connected') {
+    die('WhatsApp is not ready: ' . $status['state']);
+}
+echo 'Connected as +' . $status['user']['number'];
+echo ' — ' . $status['stats']['messages'] . ' messages stored';</pre>
+          </div>
+
+          <div class="section">
+            <h3>PHP — send messages</h3>
+            <pre class="code">// plain text to a number
+$r = wa('POST', '/send', ['to' => '60123456789', 'text' => 'Hello from PHP!']);
+echo 'sent, id = ' . $r['id'];
+
+// image from a URL, with caption
+wa('POST', '/send', [
+    'to'       => '60123456789',
+    'imageUrl' => 'https://example.com/receipt.jpg',
+    'caption'  => 'Your receipt',
+]);
+
+// to a group (use the chat id from /chats or /messages)
+wa('POST', '/send', ['to' => '120363405006268972@g.us', 'text' => 'Hi group']);</pre>
+          </div>
+
+          <div class="section">
+            <h3>PHP — read, search and poll messages</h3>
+            <pre class="code">// last 50 messages of one conversation, newest first
+$r = wa('GET', '/messages?chat=60123456789&amp;order=desc&amp;limit=50');
+foreach ($r['messages'] as $m) {
+    echo date('Y-m-d H:i:s', intval($m['timestamp'] / 1000))
+       . ($m['fromMe'] ? ' me: ' : ' ' . $m['name'] . ': ') . $m['text'] . PHP_EOL;
+}
+
+// search all history for a word
+$r = wa('GET', '/messages?q=' . urlencode('invoice') . '&amp;limit=100');
+
+// poll for NEW messages (e.g. in a cron job) — keep the cursor between runs
+$cursor = intval(@file_get_contents('cursor.txt'));
+$r = wa('GET', '/messages?after=' . $cursor);
+foreach ($r['messages'] as $m) {
+    if (!$m['fromMe']) {
+        // handle incoming message here
+    }
+}
+file_put_contents('cursor.txt', $r['cursor']);</pre>
+          </div>
+
+          <div class="section">
+            <h3>PHP — receive messages by webhook (recommended)</h3>
+            <p class="doc">Set your URL in Settings → Integration (e.g. <span class="kbd">http://localhost/my_app/receive_whatsapp.php</span>). The server POSTs each incoming message to it instantly — no polling.</p>
+            <pre class="code">&lt;?php
+// receive_whatsapp.php
+require 'wa.php';
+
+$msg = json_decode(file_get_contents('php://input'), true);
+if (!$msg || empty($msg['id'])) { http_response_code(400); exit; }
+
+// 1. log it
+file_put_contents('whatsapp.log',
+    date('c') . " {$msg['from']} ({$msg['name']}): {$msg['text']}\n", FILE_APPEND);
+
+// 2. auto-reply example
+if (strtolower(trim($msg['text'])) === 'price') {
+    wa('POST', '/send', ['to' => $msg['chat'], 'text' => 'Our price list: ...']);
+}
+
+// 3. save attached media (photo / voice / document)
+if (!empty($msg['hasMedia'])) {
+    $file = file_get_contents(WA_URL . '/media/' . $msg['id'] . '?key=' . WA_KEY);
+    if ($file !== false) file_put_contents('uploads/' . $msg['id'], $file);
+}
+
+http_response_code(200); // always answer 200 quickly</pre>
+          </div>
+
+          <div class="section">
+            <h3>PHP — download media &amp; profile pictures</h3>
+            <pre class="code">// media file for any message where hasMedia = true
+$jpg = file_get_contents(WA_URL . '/media/3EB0F60D6CE9DBEAB93486?key=' . WA_KEY);
+file_put_contents('photo.jpg', $jpg);
+
+// someone's profile picture
+$avatar = file_get_contents(WA_URL . '/avatar/60123456789?key=' . WA_KEY);
+
+// list all conversations
+$chats = wa('GET', '/chats')['chats'];
+foreach ($chats as $c) {
+    echo ($c['isGroup'] ? '[group] ' : '') . $c['name'] . ' — ' . $c['lastText'] . PHP_EOL;
+}</pre>
+          </div>
+
+          <div class="section">
+            <h3>PHP — manage the server</h3>
+            <pre class="code">// trigger a data re-sync (group names, pictures, media)
+wa('POST', '/sync');
+
+// read or change settings
+$s = wa('GET', '/settings');
+wa('POST', '/settings', ['webhookUrl' => 'http://localhost/my_app/receive_whatsapp.php']);
+
+// unlink the WhatsApp account (clearData true also wipes the local database)
+wa('POST', '/logout', ['clearData' => false]);</pre>
+          </div>
+
+          <div class="powered">Powered by <b>JSNDEV</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let KEY = localStorage.getItem('apikey') || ''
+
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t
+  localStorage.setItem('theme', t)
+  const dark = document.getElementById('theme-dark'), light = document.getElementById('theme-light')
+  if (dark && light) {
+    dark.style.background = t === 'dark' ? 'rgba(0,168,132,.15)' : 'transparent'
+    light.style.background = t === 'light' ? 'rgba(0,168,132,.15)' : 'transparent'
+  }
+}
+applyTheme(localStorage.getItem('theme') || 'dark')
+let chats = [], openChat = null, pollTimer = null, qrTimer = null, chatFilter = 'all'
+
+// ---------- notifications ----------
+let notif = JSON.parse(localStorage.getItem('notif') || '{"method":"both","sound":"beep"}')
+
+function playSound(name) {
+  const ctx = playSound.ctx || (playSound.ctx = new (window.AudioContext || window.webkitAudioContext)())
+  const t = ctx.currentTime
+  const tone = (f, start, dur, type = 'sine', vol = .25) => {
+    const o = ctx.createOscillator(), g = ctx.createGain()
+    o.type = type; o.frequency.value = f; o.connect(g); g.connect(ctx.destination)
+    g.gain.setValueAtTime(vol, t + start)
+    g.gain.exponentialRampToValueAtTime(.001, t + start + dur)
+    o.start(t + start); o.stop(t + start + dur)
+  }
+  if (name === 'beep') { tone(880, 0, .15); tone(660, .18, .22) }
+  else if (name === 'chime') { tone(523, 0, .5); tone(659, .08, .5); tone(784, .16, .65) }
+  else if (name === 'pop') { tone(300, 0, .08, 'square', .2); tone(520, .07, .07, 'square', .15) }
+}
+
+function renderNotifButtons() {
+  document.querySelectorAll('#notifmethods button').forEach(b => {
+    b.style.background = b.dataset.m === notif.method ? 'rgba(0,168,132,.15)' : 'transparent'
+  })
+  const sel = document.getElementById('notifsound'); if (sel) sel.value = notif.sound
+}
+function saveNotif() { localStorage.setItem('notif', JSON.stringify(notif)); renderNotifButtons() }
+function setNotifMethod(m) {
+  notif.method = m; saveNotif()
+  const note = document.getElementById('notifnote')
+  if ((m === 'banner' || m === 'both') && window.Notification && Notification.permission === 'default') {
+    Notification.requestPermission().then(p => {
+      note.textContent = p === 'granted' ? 'Notifications enabled.' : 'Banner permission was blocked by the system — sound still works.'
+    })
+  } else {
+    note.textContent = m === 'off' ? 'Notifications are off.' : 'Saved.'
+  }
+}
+function setNotifSound(s) { notif.sound = s; saveNotif(); playSound(s) }
+
+let notifSeq = null
+async function checkNewMessages() {
+  if (notif.method === 'off') return
+  if (notifSeq === null) { // first run: remember the newest seq, don't notify about history
+    const r = await api('/messages?order=desc&limit=1')
+    notifSeq = r.cursor || 0
+    return
+  }
+  const { messages } = await api('/messages?after=' + notifSeq + '&limit=20')
+  for (const m of messages) {
+    if (m.seq > notifSeq) notifSeq = m.seq
+    if (m.fromMe) continue
+    if (document.hasFocus() && openChat === m.chat) continue // already reading this chat
+    const text = m.text || '[' + m.type.replace('Message', '') + ']'
+    const chatInfo = chats.find(c => c.chat === m.chat)
+    // like WhatsApp: groups show the group name + picture, sender inside the body
+    const title = m.isGroup ? (chatInfo?.name || 'Group') : (m.name || '+' + m.from)
+    const body = m.isGroup ? (m.name || m.from) + ': ' + text : text
+    if (notif.method !== 'sound' && window.Notification && Notification.permission === 'granted') {
+      const n = new Notification(title, {
+        body,
+        icon: avatarSrc({ chat: m.chat, name: title }) // profile picture (or letter placeholder)
+      })
+      n.onclick = () => { window.focus(); showView('chats'); openConv(m.chat) }
+    }
+    if (notif.method !== 'banner') playSound(notif.sound)
+  }
+}
+
+const $ = id => document.getElementById(id)
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+const avatarSrc = c => '/avatar/' + encodeURIComponent(c.chat) + '?key=' + encodeURIComponent(KEY) + '&n=' + encodeURIComponent([...(c.name || '#')][0])
+const mediaUrl = id => '/media/' + encodeURIComponent(id) + '?key=' + encodeURIComponent(KEY)
+// full "2026-07-22 16:45:03" everywhere, per user preference
+const fmtTime = ts => new Date(ts).toLocaleString('sv-SE')
+
+// per-sender name colors, like WhatsApp groups
+const NAME_COLORS = ['#53BDEB', '#E542A3', '#74B76F', '#F0A44C', '#8E9CF5', '#D97B6C', '#B38FF2', '#53C0A9']
+const nameColor = s => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.codePointAt(0)) >>> 0; return NAME_COLORS[h % NAME_COLORS.length] }
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'X-API-Key': KEY, 'Content-Type': 'application/json', ...opts.headers } })
+  if (r.status === 401) { localStorage.removeItem('apikey'); location.reload(); throw new Error('unauthorized') }
+  return r.json()
+}
+
+async function doLogin(e) {
+  e.preventDefault()
+  KEY = $('keyin').value.trim()
+  const r = await fetch('/status', { headers: { 'X-API-Key': KEY } })
+  if (!r.ok) { $('loginerr').textContent = 'That key was rejected. Check .env for API_KEY.'; return }
+  localStorage.setItem('apikey', KEY)
+  boot()
+}
+
+// gray person placeholder for the profile picture before an account is linked
+const AVATAR_PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="48" fill="#2A3942"/><circle cx="48" cy="38" r="17" fill="#8696A0"/><path d="M20 82c0-16 13-24 28-24s28 8 28 24" fill="#8696A0"/></svg>')
+
+let wasLinked = null
+async function refreshStatus() {
+  const s = await api('/status')
+  const linked = s.state === 'connected'
+  $('dot').className = 'dot' + (linked ? ' ok' : '')
+  $('metext').textContent = s.user ? '+' + s.user.number : s.state.replaceAll('_', ' ')
+  if (s.user) {
+    $('myavatar').title = (s.user.name || '') + ' · +' + s.user.number
+    if (!$('myavatar').src.includes('/avatar/')) $('myavatar').src = avatarSrc({ chat: s.user.number, name: s.user.name || '#' })
+  } else {
+    $('myavatar').src = AVATAR_PLACEHOLDER
+    $('myavatar').title = 'Not linked'
+  }
+
+  // lock the app to onboarding until a WhatsApp account is linked
+  if (linked !== wasLinked) {
+    wasLinked = linked
+    $('app').classList.toggle('locked', !linked)
+    $('setupbanner').style.display = !linked ? 'flex' : 'none'
+    if (!linked) {
+      // first run: let the user set days/notifications/port first, otherwise go straight to the QR
+      showView(localStorage.getItem('setupDone') ? 'link' : 'settings')
+    } else if (['link', 'settings'].includes(currentView)) {
+      showView('chats') // just linked — reveal the app
+    }
+  }
+  if (s.stats) $('stats').innerHTML =
+    `<span class="stat"><b>${s.stats.messages.toLocaleString()}</b>messages</span>` +
+    `<span class="stat"><b>${s.stats.contacts.toLocaleString()}</b>contacts</span>` +
+    `<span class="stat"><b>${s.stats.mediaFiles.toLocaleString()}</b>media files</span>` +
+    `<span class="stat"><b>${s.stats.avatarFiles.toLocaleString()}</b>profile pictures</span>`
+  const busy = s.syncing && (s.syncing.avatars || s.syncing.media)
+  $('syncnote').textContent = busy
+    ? 'Syncing now: ' + [s.syncing.avatars && 'profile pictures', s.syncing.media && 'media'].filter(Boolean).join(' + ') + '…'
+    : ''
+}
+
+function setFilter(f) {
+  chatFilter = f
+  document.querySelectorAll('.pill').forEach(p => p.classList.toggle('on', p.dataset.f === f))
+  renderChats($('search').querySelector('input').value)
+}
+
+let lastChatsJson = ''
+async function loadChats() {
+  const data = await api('/chats')
+  const json = JSON.stringify(data)
+  if (json === lastChatsJson) return // nothing changed; don't yank the DOM around
+  lastChatsJson = json
+  chats = data.chats
+  renderChats($('search').querySelector('input').value)
+}
+
+function renderChats(filter = '') {
+  const f = filter.toLowerCase()
+  $('chatlist').innerHTML = chats
+    .filter(c => chatFilter === 'all' || (chatFilter === 'groups') === !!c.isGroup)
+    .filter(c => !f || c.name.toLowerCase().includes(f) || c.chat.includes(f))
+    .map(c => `
+    <div class="chat ${openChat === c.chat ? 'on' : ''}" onclick="openConv('${esc(c.chat)}')">
+      <img class="avatar" loading="lazy" alt="" src="${avatarSrc(c)}">
+      <div class="body">
+        <div class="top"><span class="name">${esc(c.name)}</span>
+        <span class="time">${fmtTime(c.timestamp)}</span></div>
+        <div class="preview">${c.lastFromMe ? '<span class="check">✓✓</span> ' : ''}${esc(c.lastText) || '[' + esc(c.lastType).replace('Message', '') + ']'}</div>
+      </div>
+    </div>`).join('')
+}
+
+async function openConv(chat) {
+  openChat = chat
+  $('app').classList.add('chat-open')
+  $('noconv').style.display = 'none'
+  $('conv').classList.add('on')
+  const c = chats.find(x => x.chat === chat)
+  $('convname').textContent = c ? c.name : chat
+  $('convsub').textContent = chat
+  $('convavatar').src = avatarSrc(c || { chat, name: '#' })
+  await loadMsgs()
+  $('msgs').scrollTop = $('msgs').scrollHeight // always open at the newest message
+  renderChats($('search').querySelector('input').value)
+}
+
+function closeChat() { openChat = null; $('app').classList.remove('chat-open'); $('conv').classList.remove('on'); $('noconv').style.display = 'flex'; renderChats() }
+
+function mediaHtml(m) {
+  if (!m.hasMedia) return ''
+  const u = mediaUrl(m.id)
+  if (m.type === 'imageMessage' || m.type === 'stickerMessage')
+    return `<a href="${u}" target="_blank"><img class="m" loading="lazy" src="${u}" alt="image"></a>`
+  if (m.type === 'videoMessage') return `<video controls preload="metadata" src="${u}"></video>`
+  if (m.type === 'audioMessage') return `
+    <div class="voice">
+      <button class="vbtn" type="button" onclick="toggleVoice(this,'${esc(m.id)}')">▶</button>
+      <input type="range" class="vseek" value="0" min="0" max="100" oninput="seekVoice(this,'${esc(m.id)}')">
+      <span class="vtime">🎤</span>
+    </div>`
+  if (m.type === 'documentMessage') return `<a class="doc" href="${u}" target="_blank"><span style="font-size:22px">📄</span><span>${esc(m.text || 'document')}</span><span class="arrow">↓</span></a>`
+  return ''
+}
+
+// one shared player so only one voice note plays at a time (like WhatsApp)
+const voice = new Audio()
+let voiceId = null
+const fmtDur = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') }
+function toggleVoice(btn, id) {
+  const box = btn.parentElement
+  if (voiceId === id && !voice.paused) { voice.pause(); btn.textContent = '▶'; return }
+  if (voiceId !== id) { voice.src = mediaUrl(id); voiceId = id }
+  voice.play()
+  btn.textContent = '❚❚'
+  voice.ontimeupdate = () => {
+    const seek = box.querySelector('.vseek'), t = box.querySelector('.vtime')
+    if (!seek || !box.isConnected) return
+    seek.value = voice.duration ? voice.currentTime / voice.duration * 100 : 0
+    t.textContent = fmtDur(voice.currentTime)
+  }
+  voice.onended = () => { btn.isConnected && (btn.textContent = '▶') }
+}
+function seekVoice(input, id) { if (voiceId === id && voice.duration) voice.currentTime = input.value / 100 * voice.duration }
+
+let lastMsgsJson = ''
+async function loadMsgs() {
+  if (!openChat) return
+  const { messages } = await api('/messages?chat=' + encodeURIComponent(openChat) + '&order=desc&limit=200')
+  const json = openChat + JSON.stringify(messages)
+  if (json === lastMsgsJson) return
+  lastMsgsJson = json
+  messages.reverse()
+  const el = $('msgs')
+  const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  el.innerHTML = messages.map(m => `
+    <div class="msg ${m.fromMe ? 'mine' : ''}">
+      ${m.isGroup && !m.fromMe ? `<div class="who"><span style="color:${nameColor(m.from)}">${esc(m.name || m.from)}</span>${m.name && m.name !== m.from ? '<span class="wnum">+' + esc(m.from) + '</span>' : ''}</div>` : ''}
+      ${mediaHtml(m)}
+      ${m.text && m.type !== 'documentMessage' ? esc(m.text) : ''}
+      ${!m.text && !m.hasMedia ? '<span class="media-label">[' + esc(m.type).replace('Message', '') + ']</span>' : ''}
+      <span class="t">${fmtTime(m.timestamp)}</span>
+    </div>`).join('')
+  if (stick) el.scrollTop = el.scrollHeight
+  // images load after render and grow the content — keep pinned to the bottom while near it
+  el.querySelectorAll('img.m').forEach(img => {
+    img.onload = () => { if (el.scrollHeight - el.scrollTop - el.clientHeight < 500) el.scrollTop = el.scrollHeight }
+  })
+}
+
+async function sendMsg(e) {
+  e.preventDefault()
+  const text = $('msgin').value.trim()
+  if (!text || !openChat) return
+  $('msgin').value = ''
+  const r = await api('/send', { method: 'POST', body: JSON.stringify({ to: openChat, text }) })
+  if (r.error) alert(r.error)
+  setTimeout(() => { loadMsgs(); loadChats() }, 600)
+}
+
+async function pollQR() {
+  const q = await api('/qr.json')
+  const card = $('linkcard')
+  if (q.state === 'connected') {
+    card.innerHTML = `<h3>Device linked ✓</h3>
+      <p>Connected as <b>${esc(q.user?.name || '')}</b> <span class="mono">+${esc(q.user?.number || '')}</span>.<br>
+      Messages are syncing to the local database.</p>`
+  } else if (q.qr) {
+    card.innerHTML = `<h3>Scan to link your WhatsApp</h3>
+      <p>On your phone: WhatsApp → Settings → Linked devices → Link a device.</p>
+      <img src="${q.qr}" width="264" height="264" alt="QR code for linking">`
+  } else {
+    card.innerHTML = `<h3>Waiting for QR…</h3><p>Current state: ${esc(q.state.replaceAll('_', ' '))}. This refreshes automatically.</p>`
+  }
+}
+
+async function loadSettings() {
+  const s = await api('/settings')
+  $('wh').value = s.webhookUrl || ''
+  $('keepdays').value = s.keepDays
+  $('mediadays').value = s.mediaSyncDays
+  $('port').value = s.port
+  $('apikeyshow').value = KEY
+  applyTheme(localStorage.getItem('theme') || 'dark') // refresh button highlight
+  renderNotifButtons()
+}
+
+async function saveSettings() {
+  const r = await api('/settings', { method: 'POST', body: JSON.stringify({
+    webhookUrl: $('wh').value,
+    keepDays: $('keepdays').value,
+    mediaSyncDays: $('mediadays').value,
+    port: $('port').value
+  }) })
+  $('setnote').textContent = 'Saved. Keeping ' + r.keepDays + ' days of messages' + (r.webhookUrl ? ', webhook on.' : ', webhook off.')
+}
+
+async function syncNow() {
+  const r = await api('/sync', { method: 'POST' })
+  $('syncnote').textContent = r.ok ? 'Sync started — progress shows here and in the Settings header.' : (r.error || 'Sync failed to start.')
+  refreshStatus()
+}
+
+async function unlink() {
+  if (!confirm('Unlink this WhatsApp account? You will need to scan the QR code again.')) return
+  const clearData = confirm('Also delete all synced messages, contacts and pictures from the local database?\n\nOK = delete everything\nCancel = keep the data')
+  await api('/logout', { method: 'POST', body: JSON.stringify({ clearData }) })
+  lastChatsJson = ''; lastMsgsJson = ''; closeChat(); loadChats()
+  showView('link')
+}
+
+const VIEW_TITLES = { chats: 'Chats', link: 'Link device', settings: 'Settings', docs: 'API docs' }
+let currentView = 'chats'
+function showView(v) {
+  // while not linked, only the link and settings screens are reachable
+  if ($('app').classList.contains('locked') && !['link', 'settings'].includes(v)) v = 'link'
+  currentView = v
+  document.querySelectorAll('.ric').forEach(t => t.classList.toggle('on', t.dataset.view === v))
+  document.querySelectorAll('#main > .view').forEach(x => x.classList.toggle('on', x.id === 'view-' + v))
+  $('app').classList.toggle('fullpage', v !== 'chats') // pages take the whole width
+  $('sidetitle').textContent = VIEW_TITLES[v] || 'Chats'
+  clearInterval(qrTimer)
+  if (v === 'link') { pollQR(); qrTimer = setInterval(pollQR, 3000) }
+  if (v === 'settings') { loadSettings(); $('setupbanner').style.display = $('app').classList.contains('locked') ? 'flex' : 'none' }
+  if (v === 'docs') $('docbase').textContent = location.origin
+}
+
+function boot() {
+  $('login').style.display = 'none'
+  $('app').classList.add('on')
+  refreshStatus(); loadChats()
+  clearInterval(pollTimer)
+  checkNewMessages()
+  pollTimer = setInterval(() => { refreshStatus(); loadChats(); loadMsgs(); checkNewMessages() }, 4000)
+}
+
+// the key is embedded in the page by the server — the app never asks for it
+KEY = window.__WA_KEY__ || new URLSearchParams(location.search).get('key') || KEY
+if (KEY) {
+  boot()
+  const tab = location.hash.slice(1)
+  if (['link', 'settings', 'docs'].includes(tab)) showView(tab)
+} else {
+  // fallback only if opened without an embedded key (e.g. a stripped copy)
+  $('login').style.display = 'flex'
+}
+window.addEventListener('hashchange', () => {
+  const tab = location.hash.slice(1)
+  if (['chats', 'link', 'settings', 'docs'].includes(tab)) showView(tab)
+})
+
+// syntax colors for the docs code blocks — comments, strings, $vars, keywords, numbers, functions
+const HL = [
+  [/(\/\/[^\n]*)/, 'tok-c'],
+  [/('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")/, 'tok-s'],
+  [/(\$\w+)/, 'tok-v'],
+  [/\b(function|require|include|define|echo|die|exit|foreach|as|if|else|elseif|return|new|throw|true|false|null|GET|POST)\b/, 'tok-k'],
+  [/\b(\d+(?:\.\d+)?)\b/, 'tok-n'],
+  [/\b([a-zA-Z_]\w*)(?=\()/, 'tok-f']
+]
+const HL_RE = new RegExp(HL.map(h => h[0].source).join('|'), 'g')
+document.querySelectorAll('pre.code').forEach(el => {
+  const src = el.textContent
+  let html = '', last = 0
+  for (const m of src.matchAll(HL_RE)) {
+    const gi = m.slice(1).findIndex(g => g !== undefined)
+    html += esc(src.slice(last, m.index)) + '<span class="' + HL[gi][1] + '">' + esc(m[0]) + '</span>'
+    last = m.index + m[0].length
+  }
+  el.innerHTML = html + esc(src.slice(last))
+})
+</script>
+</body>
+</html>

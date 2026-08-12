@@ -1,0 +1,13 @@
+node_modules/
+auth/
+messages.db*
+.env
+avatars/
+media/
+server.log
+server-err.log
+dist/
+dist-electron/
+build/*
+!build/installer.nsh
+.remember/
