@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+permissions:
+  contents: write
 jobs:
   dmg:
     runs-on: macos-latest
@@ -19,3 +21,9 @@ jobs:
         with:
           name: WhatsApp-Server-dmg
           path: dist-electron/*.dmg
+      - name: Publish to GitHub Release (permanent download links)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create latest --title "WhatsApp Server" --notes "Latest macOS build" || true
+          gh release upload latest dist-electron/*.dmg --clobber

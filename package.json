@@ -44,7 +44,8 @@
     "mac": {
       "target": "dmg",
       "icon": "build/icon.png",
-      "category": "public.app-category.business"
+      "category": "public.app-category.business",
+      "artifactName": "WhatsApp-Server-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
