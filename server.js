@@ -407,6 +407,7 @@ async function handlePollVote(m) {
   }
   saveMessage({
     id: m.key.id,
+    pollId,                 // which poll was answered — lets the engine drop late re-taps
     from: row.chat, chat: row.chat, isGroup: false, fromMe: false,
     name: m.pushName || '',
     type: 'poll_vote',
