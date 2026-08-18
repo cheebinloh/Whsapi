@@ -713,13 +713,27 @@ app.get('/media/:id', async (req, res) => {
 
 /* Media uploaded from the flow builder (via oc), stored beside the session
    that will send it. base64-in-JSON keeps the bridge dependency-free. */
-const UPLOAD_EXT = { jpg: 'image', jpeg: 'image', png: 'image', webp: 'image', gif: 'image', mp4: 'video' }
+const UPLOAD_EXT = {
+  jpg: 'image', jpeg: 'image', png: 'image', webp: 'image', gif: 'image', mp4: 'video',
+  pdf: 'document', doc: 'document', docx: 'document', xls: 'document', xlsx: 'document',
+  ppt: 'document', pptx: 'document', txt: 'document', csv: 'document', zip: 'document'
+}
+// documents are sent with their mime type, or WhatsApp shows them as a blank file
+const DOC_MIME = {
+  pdf: 'application/pdf', doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain', csv: 'text/csv', zip: 'application/zip'
+}
 app.post('/upload', (req, res) => {
   const { name, data } = req.body || {}
   const clean = sanitizeUpName(name)
   const ext = clean.split('.').pop().toLowerCase()
   const kind = UPLOAD_EXT[ext]
-  if (!kind) return res.status(400).json({ error: 'allowed: jpg, jpeg, png, webp, gif, mp4' })
+  if (!kind) return res.status(400).json({ error: 'allowed: ' + Object.keys(UPLOAD_EXT).join(', ') })
   let buf
   try { buf = Buffer.from(String(data || ''), 'base64') } catch { buf = null }
   if (!buf || !buf.length) return res.status(400).json({ error: 'empty file' })
@@ -741,7 +755,7 @@ function mediaSource(ref) {
 app.post('/send', async (req, res) => {
   if (connectionState !== 'connected') return res.status(503).json({ error: 'whatsapp not connected', state: connectionState })
   try {
-    const { to, text, imageUrl, videoUrl, caption, poll, typingSeconds } = req.body || {}
+    const { to, text, imageUrl, videoUrl, documentUrl, fileName, caption, poll, typingSeconds } = req.body || {}
     const jid = toJid(to)
     let content, pollValues = null
     if (poll) {
@@ -753,8 +767,17 @@ app.post('/send', async (req, res) => {
       content = { poll: { name, values: pollValues, selectableCount: 1 } }
     } else if (videoUrl) content = { video: mediaSource(videoUrl), caption: caption || text || '' }
     else if (imageUrl) content = { image: mediaSource(imageUrl), caption: caption || text || '' }
+    else if (documentUrl) {
+      const named = sanitizeUpName(fileName || resolveMediaRef(documentUrl) || 'file')
+      content = {
+        document: mediaSource(documentUrl),
+        mimetype: DOC_MIME[named.split('.').pop().toLowerCase()] || 'application/octet-stream',
+        fileName: named,
+        caption: caption || text || ''
+      }
+    }
     else if (text) content = { text }
-    else return res.status(400).json({ error: 'provide "text", "imageUrl", "videoUrl" or "poll"' })
+    else return res.status(400).json({ error: 'provide "text", "imageUrl", "videoUrl", "documentUrl" or "poll"' })
     // "typing..." for a moment before the message lands, like a human would
     const typing = clampTyping(typingSeconds)
     if (typing > 0) {
