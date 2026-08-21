@@ -880,7 +880,7 @@ function pollHtml(text) {
   const lines = String(text || '').split('\n').filter(l => l.trim())
   const q = lines.length ? lines.shift() : '📊 Poll'
   return `<div class="poll"><div class="poll-q">${esc(q)}</div>` +
-    lines.map(l => `<div class="poll-opt">${esc(l.replace(/^\d+\.\s*/, ''))}</div>`).join('') + '</div>'
+    lines.map(l => `<div class="poll-opt">${esc(l)}</div>`).join('') + '</div>'  // keep "1." — votes arrive as "typed 2"
 }
 
 let lastMsgsJson = ''
