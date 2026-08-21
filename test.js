@@ -16,6 +16,10 @@ assert.equal(extractText({ conversation: 'hi' }), 'hi')
 assert.equal(extractText({ extendedTextMessage: { text: 'yo' } }), 'yo')
 assert.equal(extractText({ imageMessage: { caption: 'pic' } }), 'pic')
 assert.equal(extractText(null), '')
+assert.equal(
+  extractText({ pollCreationMessageV3: { name: 'Which color?', options: [{ optionName: 'Gold' }, { optionName: 'Silver' }] } }),
+  '📊 Which color?\n1. Gold\n2. Silver')
+assert.equal(extractText({ pollCreationMessage: { name: 'Q', options: [] } }), '📊 Q')
 
 assert.equal(messageType({ imageMessage: {} }), 'imageMessage')
 assert.equal(messageType({ messageContextInfo: {}, conversation: 'x' }), 'conversation')

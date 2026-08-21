@@ -58,6 +58,13 @@ export function jidToNumber(jid) {
 
 export function extractText(message) {
   if (!message) return ''
+  // polls have no plain text — render question + numbered options, matching
+  // the "customer typed 2" shape poll votes already decode into
+  const pollKey = Object.keys(message).find(k => k.startsWith('pollCreationMessage'))
+  const poll = pollKey && message[pollKey]
+  if (poll && poll.name) {
+    return '📊 ' + poll.name + (poll.options || []).map((o, i) => '\n' + (i + 1) + '. ' + (o.optionName || '')).join('')
+  }
   return message.conversation
     || message.extendedTextMessage?.text
     || message.imageMessage?.caption
