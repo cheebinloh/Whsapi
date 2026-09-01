@@ -8,6 +8,7 @@ import http from 'node:http'
 import https from 'node:https'
 import fs from 'fs'
 import path from 'path'
+import { spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -427,7 +428,7 @@ async function handlePollVote(m) {
 // ---------- http api ----------
 
 const app = express()
-app.use(express.json({ limit: '25mb' }))   // uploads arrive base64-in-JSON
+app.use(express.json({ limit: '80mb' }))   // uploads arrive base64-in-JSON (50MB file ≈ 67MB base64)
 
 const isLocalReq = (req) => {
   const ip = String(req.ip || '').replace(/^::ffff:/, '')
@@ -826,6 +827,60 @@ app.post('/send', async (req, res) => {
     res.status(err.message.includes('"to"') ? 400 : 500).json({ error: err.message })
   }
 })
+
+/* POST /youtube {to, url, caption?} - downloads the YouTube video, compresses
+   it to WhatsApp size (480p-ish, x264 crf28) and sends it as a playable video
+   message. The work takes a while, so the request is answered immediately and
+   the send happens in the background - watch the console for failures. */
+app.post('/youtube', (req, res) => {
+  const { to, url, caption } = req.body || {}
+  let jid
+  try { jid = toJid(to) } catch (e) { return res.status(400).json({ error: e.message }) }
+  if (!/^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be)\//i.test(String(url || ''))) {
+    return res.status(400).json({ error: 'not a youtube link' })
+  }
+  if (connectionState !== 'connected') return res.status(503).json({ error: 'whatsapp not connected', state: connectionState })
+  res.json({ ok: true, queued: true })
+  sendYoutubeVideo(jid, String(url), String(caption || ''))
+    .catch(err => console.error('youtube send failed:', url, '-', err.message))
+})
+
+async function sendYoutubeVideo(jid, url, caption) {
+  const ytdl = (await import('@distube/ytdl-core')).default
+  const ffmpegPath = (await import('ffmpeg-static')).default
+  const info = await ytdl.getInfo(url)
+  // muxed mp4 (audio+video in one stream) tops out around 360p - the compress
+  // pass below is the real size control anyway
+  const format = ytdl.chooseFormat(info.formats, {
+    quality: 'highest',
+    filter: f => f.hasVideo && f.hasAudio && f.container === 'mp4'
+  })
+  const stamp = Date.now()
+  const raw = path.join(MEDIA_DIR, 'yt-' + stamp + '-raw.mp4')
+  const out = path.join(MEDIA_DIR, 'yt-' + stamp + '.mp4')
+  try {
+    await new Promise((resolve, reject) => {
+      const w = ytdl.downloadFromInfo(info, { format }).on('error', reject).pipe(fs.createWriteStream(raw))
+      w.on('finish', resolve)
+      w.on('error', reject)
+    })
+    await new Promise((resolve, reject) => {
+      const p = spawn(ffmpegPath, ['-y', '-i', raw,
+        '-vf', "scale='min(640,iw)':-2", '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast',
+        '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', out])
+      p.on('close', c => c === 0 ? resolve() : reject(new Error('ffmpeg exited ' + c)))
+      p.on('error', reject)
+    })
+    const size = fs.statSync(out).size
+    if (size > 50 * 1024 * 1024) throw new Error('still over 50MB after compression (' + Math.round(size / 1e6) + 'MB) - video too long')
+    const result = await sock.sendMessage(jid, { video: { url: out }, caption: caption || info.videoDetails.title || '' })
+    rememberApiSend(result.key.id)
+    console.log('youtube video sent:', url, Math.round(size / 1e6) + 'MB')
+  } finally {
+    fs.rmSync(raw, { force: true })
+    fs.rmSync(out, { force: true })
+  }
+}
 
 // GET /messages?after=<seq>&from=<number>&chat=<number|groupjid>&q=<text search>&limit=100
 app.get('/messages', (req, res) => {
