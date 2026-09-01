@@ -722,8 +722,13 @@ app.get('/media/:id', async (req, res) => {
    that will send it. base64-in-JSON keeps the bridge dependency-free. */
 const UPLOAD_EXT = {
   jpg: 'image', jpeg: 'image', png: 'image', webp: 'image', gif: 'image', mp4: 'video',
+  ogg: 'audio', webm: 'audio', opus: 'audio', m4a: 'audio', mp3: 'audio', aac: 'audio',
   pdf: 'document', doc: 'document', docx: 'document', xls: 'document', xlsx: 'document',
   ppt: 'document', pptx: 'document', txt: 'document', csv: 'document', zip: 'document'
+}
+const AUDIO_MIME = {
+  ogg: 'audio/ogg; codecs=opus', webm: 'audio/webm', opus: 'audio/ogg; codecs=opus',
+  m4a: 'audio/mp4', mp3: 'audio/mpeg', aac: 'audio/aac'
 }
 // documents are sent with their mime type, or WhatsApp shows them as a blank file
 const DOC_MIME = {
@@ -762,7 +767,7 @@ function mediaSource(ref) {
 app.post('/send', async (req, res) => {
   if (connectionState !== 'connected') return res.status(503).json({ error: 'whatsapp not connected', state: connectionState })
   try {
-    const { to, text, imageUrl, videoUrl, documentUrl, fileName, caption, poll, typingSeconds } = req.body || {}
+    const { to, text, imageUrl, videoUrl, documentUrl, audioUrl, ptt, fileName, caption, poll, typingSeconds } = req.body || {}
     const jid = toJid(to)
     let content, pollValues = null
     if (poll) {
@@ -773,6 +778,18 @@ app.post('/send', async (req, res) => {
       }
       content = { poll: { name, values: pollValues, selectableCount: 1 } }
     } else if (videoUrl) content = { video: mediaSource(videoUrl), caption: caption || text || '' }
+    else if (audioUrl) {
+      /* ptt=1 marks it a voice note. Browser recordings are webm/opus - declared
+         as ogg/opus so WhatsApp treats them as playable voice messages (same
+         opus payload; iOS can be picky about exotic containers). */
+      const isPtt = String(ptt) === '1' || ptt === true
+      const ext = String(resolveMediaRef(audioUrl) || audioUrl).split('.').pop().toLowerCase()
+      content = {
+        audio: mediaSource(audioUrl),
+        ptt: isPtt,
+        mimetype: isPtt ? 'audio/ogg; codecs=opus' : (AUDIO_MIME[ext] || 'audio/mpeg')
+      }
+    }
     else if (imageUrl) content = { image: mediaSource(imageUrl), caption: caption || text || '' }
     else if (documentUrl) {
       const named = sanitizeUpName(fileName || resolveMediaRef(documentUrl) || 'file')
