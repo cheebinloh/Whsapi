@@ -895,8 +895,16 @@ async function ensureYtDlp() {
   return bin
 }
 
+/* Inside the packaged Electron app the ffmpeg binary lives in app.asar.unpacked
+   (spawning from within the asar archive is impossible - ENOTDIR), but the
+   module still reports the in-archive path. Point past the archive. */
+async function ffmpegBin() {
+  const p = (await import('ffmpeg-static')).default
+  return p ? p.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1') : p
+}
+
 async function sendYoutubeVideo(jobId, jid, url, caption) {
-  const ffmpegPath = (await import('ffmpeg-static')).default
+  const ffmpegPath = await ffmpegBin()
   ytJobSet(jobId, { status: 'preparing' })
   const bin = await ensureYtDlp()
   const stamp = Date.now()

@@ -57,7 +57,7 @@
       "include": "build/installer.nsh"
     },
     "asarUnpack": [
-      "node_modules/ffmpeg-static/**"
+      "**/node_modules/ffmpeg-static/**"
     ]
   }
 }
