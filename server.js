@@ -832,6 +832,21 @@ app.post('/send', async (req, res) => {
    it to WhatsApp size (480p-ish, x264 crf28) and sends it as a playable video
    message. The work takes a while, so the request is answered immediately and
    the send happens in the background - watch the console for failures. */
+/* Each send is a tracked job: GET /youtube/status?id=... follows it through
+   downloading (with %) -> compressing -> sending -> sent | failed(error). */
+const ytJobs = new Map()
+
+function ytJobSet(id, patch) {
+  const j = ytJobs.get(id)
+  if (j) Object.assign(j, patch, { updated: Date.now() })
+}
+
+app.get('/youtube/status', (req, res) => {
+  const j = ytJobs.get(String(req.query.id || ''))
+  if (!j) return res.status(404).json({ error: 'unknown job' })
+  res.json({ ok: true, job: j })
+})
+
 app.post('/youtube', (req, res) => {
   const { to, url, caption } = req.body || {}
   let jid
@@ -840,9 +855,16 @@ app.post('/youtube', (req, res) => {
     return res.status(400).json({ error: 'not a youtube link' })
   }
   if (connectionState !== 'connected') return res.status(503).json({ error: 'whatsapp not connected', state: connectionState })
-  res.json({ ok: true, queued: true })
-  sendYoutubeVideo(jid, String(url), String(caption || ''))
-    .catch(err => console.error('youtube send failed:', url, '-', err.message))
+  const id = crypto.randomUUID()
+  ytJobs.set(id, { id, url: String(url), status: 'queued', percent: 0, error: '', created: Date.now(), updated: Date.now() })
+  // old jobs age out - the map must not grow forever
+  for (const [k, j] of ytJobs) { if (Date.now() - j.created > 3600000) ytJobs.delete(k) }
+  res.json({ ok: true, queued: true, job: id })
+  sendYoutubeVideo(id, jid, String(url), String(caption || ''))
+    .catch(err => {
+      ytJobSet(id, { status: 'failed', error: err.message })
+      console.error('youtube send failed:', url, '-', err.message)
+    })
 })
 
 /* The extractor is yt-dlp, fetched on first use and self-updated weekly - the
@@ -873,22 +895,29 @@ async function ensureYtDlp() {
   return bin
 }
 
-async function sendYoutubeVideo(jid, url, caption) {
+async function sendYoutubeVideo(jobId, jid, url, caption) {
   const ffmpegPath = (await import('ffmpeg-static')).default
+  ytJobSet(jobId, { status: 'preparing' })
   const bin = await ensureYtDlp()
   const stamp = Date.now()
   const raw = path.join(MEDIA_DIR, 'yt-' + stamp + '-raw.mp4')
   const out = path.join(MEDIA_DIR, 'yt-' + stamp + '.mp4')
   try {
+    ytJobSet(jobId, { status: 'downloading' })
     let errOut = ''
     await new Promise((resolve, reject) => {
       const p = spawn(bin, ['-f', 'bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4]/b',
         '--merge-output-format', 'mp4', '--ffmpeg-location', ffmpegPath,
-        '--no-playlist', '-o', raw, url])
+        '--no-playlist', '--newline', '-o', raw, url])
+      p.stdout.on('data', d => {
+        const m = String(d).match(/\[download\]\s+([\d.]+)%/)
+        if (m) ytJobSet(jobId, { percent: Math.round(parseFloat(m[1])) })
+      })
       p.stderr.on('data', d => { errOut += d })
       p.on('close', c => c === 0 ? resolve() : reject(new Error('yt-dlp exited ' + c + ': ' + errOut.slice(-300))))
       p.on('error', reject)
     })
+    ytJobSet(jobId, { status: 'compressing', percent: 100 })
     await new Promise((resolve, reject) => {
       const p = spawn(ffmpegPath, ['-y', '-i', raw,
         '-vf', "scale='min(640,iw)':-2", '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast',
@@ -898,8 +927,10 @@ async function sendYoutubeVideo(jid, url, caption) {
     })
     const size = fs.statSync(out).size
     if (size > 50 * 1024 * 1024) throw new Error('still over 50MB after compression (' + Math.round(size / 1e6) + 'MB) - video too long')
+    ytJobSet(jobId, { status: 'sending' })
     const result = await sock.sendMessage(jid, { video: { url: out }, caption: caption || '' })
     rememberApiSend(result.key.id)
+    ytJobSet(jobId, { status: 'sent' })
     console.log('youtube video sent:', url, Math.round(size / 1e6) + 'MB')
   } finally {
     fs.rmSync(raw, { force: true })
