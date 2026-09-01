@@ -21,7 +21,9 @@ jobs:
       - run: npx electron-builder --mac dmg --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # unsigned build, no Apple cert needed
-      - run: npm rebuild ffmpeg-static
+      # ffmpeg-static's installer skips the download while a binary exists -
+      # delete the arm64 one first or the x64 dmg ships the wrong CPU again
+      - run: rm -f node_modules/ffmpeg-static/ffmpeg && npm rebuild ffmpeg-static
         env:
           npm_config_arch: x64
       - run: npx electron-builder --mac dmg --x64 --publish never
