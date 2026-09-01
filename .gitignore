@@ -11,3 +11,5 @@ dist-electron/
 build/*
 !build/installer.nsh
 .remember/
+yt-dlp.exe
+yt-dlp

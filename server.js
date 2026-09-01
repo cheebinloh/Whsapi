@@ -845,24 +845,49 @@ app.post('/youtube', (req, res) => {
     .catch(err => console.error('youtube send failed:', url, '-', err.message))
 })
 
+/* The extractor is yt-dlp, fetched on first use and self-updated weekly - the
+   pure-JS libraries (ytdl-core & friends) all break whenever YouTube changes
+   its player, yt-dlp is the one that keeps recovering. */
+const YTDLP_URL = {
+  darwin: 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos',
+  win32: 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe',
+  linux: 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp'
+}
+
+async function ensureYtDlp() {
+  const bin = path.join(BASE_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp')
+  if (!fs.existsSync(bin)) {
+    console.log('downloading yt-dlp...')
+    const res = await fetch(YTDLP_URL[process.platform] || YTDLP_URL.linux)
+    if (!res.ok) throw new Error('yt-dlp download failed: http ' + res.status)
+    fs.writeFileSync(bin, Buffer.from(await res.arrayBuffer()))
+    if (process.platform !== 'win32') fs.chmodSync(bin, 0o755)
+  } else if (Date.now() - fs.statSync(bin).mtimeMs > 7 * 86400000) {
+    // the standalone binary updates itself; stale extractors are the #1 failure
+    await new Promise(resolve => {
+      const p = spawn(bin, ['-U'])
+      p.on('close', () => { try { fs.utimesSync(bin, new Date(), new Date()) } catch {} resolve() })
+      p.on('error', resolve)   // update is best-effort, never blocks a send
+    })
+  }
+  return bin
+}
+
 async function sendYoutubeVideo(jid, url, caption) {
-  const ytdl = (await import('@distube/ytdl-core')).default
   const ffmpegPath = (await import('ffmpeg-static')).default
-  const info = await ytdl.getInfo(url)
-  // muxed mp4 (audio+video in one stream) tops out around 360p - the compress
-  // pass below is the real size control anyway
-  const format = ytdl.chooseFormat(info.formats, {
-    quality: 'highest',
-    filter: f => f.hasVideo && f.hasAudio && f.container === 'mp4'
-  })
+  const bin = await ensureYtDlp()
   const stamp = Date.now()
   const raw = path.join(MEDIA_DIR, 'yt-' + stamp + '-raw.mp4')
   const out = path.join(MEDIA_DIR, 'yt-' + stamp + '.mp4')
   try {
+    let errOut = ''
     await new Promise((resolve, reject) => {
-      const w = ytdl.downloadFromInfo(info, { format }).on('error', reject).pipe(fs.createWriteStream(raw))
-      w.on('finish', resolve)
-      w.on('error', reject)
+      const p = spawn(bin, ['-f', 'bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4]/b',
+        '--merge-output-format', 'mp4', '--ffmpeg-location', ffmpegPath,
+        '--no-playlist', '-o', raw, url])
+      p.stderr.on('data', d => { errOut += d })
+      p.on('close', c => c === 0 ? resolve() : reject(new Error('yt-dlp exited ' + c + ': ' + errOut.slice(-300))))
+      p.on('error', reject)
     })
     await new Promise((resolve, reject) => {
       const p = spawn(ffmpegPath, ['-y', '-i', raw,
@@ -873,7 +898,7 @@ async function sendYoutubeVideo(jid, url, caption) {
     })
     const size = fs.statSync(out).size
     if (size > 50 * 1024 * 1024) throw new Error('still over 50MB after compression (' + Math.round(size / 1e6) + 'MB) - video too long')
-    const result = await sock.sendMessage(jid, { video: { url: out }, caption: caption || info.videoDetails.title || '' })
+    const result = await sock.sendMessage(jid, { video: { url: out }, caption: caption || '' })
     rememberApiSend(result.key.id)
     console.log('youtube video sent:', url, Math.round(size / 1e6) + 'MB')
   } finally {
