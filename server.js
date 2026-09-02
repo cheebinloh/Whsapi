@@ -8,7 +8,8 @@ import http from 'node:http'
 import https from 'node:https'
 import fs from 'fs'
 import path from 'path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import zlib from 'node:zlib'
 import { fileURLToPath, pathToFileURL } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -898,9 +899,26 @@ async function ensureYtDlp() {
 /* Inside the packaged Electron app the ffmpeg binary lives in app.asar.unpacked
    (spawning from within the asar archive is impossible - ENOTDIR), but the
    module still reports the in-archive path. Point past the archive. */
+/* ...and the bundled binary must match this CPU: a build packed on the wrong
+   runner arch dies with spawn error -86. So the binary is TESTED before use,
+   and if it will not run here the matching build for process.arch is fetched
+   once into the data dir (the same release ffmpeg-static itself installs from). */
+let ffmpegResolved = null
 async function ffmpegBin() {
-  const p = (await import('ffmpeg-static')).default
-  return p ? p.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1') : p
+  if (ffmpegResolved) return ffmpegResolved
+  const works = p => { try { return !!p && spawnSync(p, ['-version']).status === 0 } catch { return false } }
+  const bundled = ((await import('ffmpeg-static')).default || '').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
+  if (works(bundled)) return (ffmpegResolved = bundled)
+  const local = path.join(BASE_DIR, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+  if (works(local)) return (ffmpegResolved = local)
+  console.log('bundled ffmpeg unusable on ' + process.platform + '/' + process.arch + ' - downloading a matching build')
+  const url = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-' + process.platform + '-' + process.arch + '.gz'
+  const res = await fetch(url)
+  if (!res.ok) throw new Error('ffmpeg download failed: http ' + res.status + ' (' + process.platform + '/' + process.arch + ')')
+  fs.writeFileSync(local, zlib.gunzipSync(Buffer.from(await res.arrayBuffer())))
+  if (process.platform !== 'win32') fs.chmodSync(local, 0o755)
+  if (!works(local)) throw new Error('downloaded ffmpeg for ' + process.arch + ' will not run either')
+  return (ffmpegResolved = local)
 }
 
 async function sendYoutubeVideo(jobId, jid, url, caption) {
@@ -931,7 +949,7 @@ async function sendYoutubeVideo(jobId, jid, url, caption) {
         '-vf', "scale='min(640,iw)':-2", '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast',
         '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', out])
       p.on('close', c => c === 0 ? resolve() : reject(new Error('ffmpeg exited ' + c)))
-      p.on('error', reject)
+      p.on('error', e => reject(new Error('ffmpeg spawn failed on ' + process.arch + ' (' + ffmpegPath + '): ' + e.message)))
     })
     const size = fs.statSync(out).size
     if (size > 50 * 1024 * 1024) throw new Error('still over 50MB after compression (' + Math.round(size / 1e6) + 'MB) - video too long')
