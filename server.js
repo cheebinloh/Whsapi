@@ -463,6 +463,16 @@ app.use((req, res, next) => {
   next()
 })
 
+// GET /upload/:name — hand back a file stored by POST /upload (the name part of a media:// ref),
+// so the web app can keep its own viewable copy of pictures attached to flows
+app.get('/upload/:name', (req, res) => {
+  const name = resolveMediaRef('media://' + req.params.name)
+  if (!name || !name.startsWith('up_')) return res.status(400).json({ error: 'bad name' })
+  const full = path.join(MEDIA_DIR, name)
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'not found' })
+  res.sendFile(full)
+})
+
 app.get('/status', (req, res) => {
   res.json({
     state: connectionState,
