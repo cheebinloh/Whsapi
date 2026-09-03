@@ -878,6 +878,23 @@ app.post('/youtube', (req, res) => {
     })
 })
 
+// POST /youtube/prepare { url } -> { job }; poll /youtube/status?id= until status 'ready' (media, bytes) or 'failed'
+app.post('/youtube/prepare', (req, res) => {
+  const { url } = req.body || {}
+  if (!/^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be)\//i.test(String(url || ''))) {
+    return res.status(400).json({ error: 'not a youtube link' })
+  }
+  const id = crypto.randomUUID()
+  ytJobs.set(id, { id, url: String(url), status: 'queued', percent: 0, error: '', created: Date.now(), updated: Date.now() })
+  for (const [k, j] of ytJobs) { if (Date.now() - j.created > 3600000) ytJobs.delete(k) }
+  res.json({ ok: true, queued: true, job: id })
+  prepareYoutubeVideo(id, String(url))
+    .catch(err => {
+      ytJobSet(id, { status: 'failed', error: err.message })
+      console.error('youtube prepare failed:', url, '-', err.message)
+    })
+})
+
 /* The extractor is yt-dlp, fetched on first use and self-updated weekly - the
    pure-JS libraries (ytdl-core & friends) all break whenever YouTube changes
    its player, yt-dlp is the one that keeps recovering. */
@@ -931,7 +948,9 @@ async function ffmpegBin() {
   return (ffmpegResolved = local)
 }
 
-async function sendYoutubeVideo(jobId, jid, url, caption) {
+/* Download (yt-dlp, <=720p) and compress (ffmpeg, 640px, crf 28) a YouTube link.
+   Returns the paths; the caller decides whether to send it now or keep it. */
+async function ytPrepareFile(jobId, url) {
   const ffmpegPath = await ffmpegBin()
   ytJobSet(jobId, { status: 'preparing' })
   const bin = await ensureYtDlp()
@@ -963,6 +982,17 @@ async function sendYoutubeVideo(jobId, jid, url, caption) {
     })
     const size = fs.statSync(out).size
     if (size > 50 * 1024 * 1024) throw new Error('still over 50MB after compression (' + Math.round(size / 1e6) + 'MB) - video too long')
+    return { raw, out, size }
+  } catch (e) {
+    fs.rmSync(raw, { force: true })
+    fs.rmSync(out, { force: true })
+    throw e
+  }
+}
+
+async function sendYoutubeVideo(jobId, jid, url, caption) {
+  const { raw, out, size } = await ytPrepareFile(jobId, url)
+  try {
     ytJobSet(jobId, { status: 'sending' })
     const result = await sock.sendMessage(jid, { video: { url: out }, caption: caption || '' })
     rememberApiSend(result.key.id)
@@ -972,6 +1002,17 @@ async function sendYoutubeVideo(jobId, jid, url, caption) {
     fs.rmSync(raw, { force: true })
     fs.rmSync(out, { force: true })
   }
+}
+
+/* Prepare once, send many: the compressed clip is kept as an upload (media://up_...)
+   so a flow node can send it instantly without downloading again. */
+async function prepareYoutubeVideo(jobId, url) {
+  const { raw, out, size } = await ytPrepareFile(jobId, url)
+  fs.rmSync(raw, { force: true })
+  const file = 'up_' + Date.now() + '_youtube.mp4'
+  fs.renameSync(out, path.join(MEDIA_DIR, file))
+  ytJobSet(jobId, { status: 'ready', media: 'media://' + file, bytes: size })
+  console.log('youtube video prepared:', url, Math.round(size / 1e6) + 'MB ->', file)
 }
 
 // GET /messages?after=<seq>&from=<number>&chat=<number|groupjid>&q=<text search>&limit=100
