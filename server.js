@@ -895,6 +895,29 @@ app.post('/youtube/prepare', (req, res) => {
     })
 })
 
+// POST /video/prepare { name, data(base64) } -> { job }; same status polling as /youtube/prepare
+app.post('/video/prepare', (req, res) => {
+  const { name, data } = req.body || {}
+  const clean = sanitizeUpName(name)
+  const ext = clean.split('.').pop().toLowerCase()
+  if (!['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi', '3gp'].includes(ext)) return res.status(400).json({ error: 'allowed: mp4, mov, m4v, webm, mkv, avi, 3gp' })
+  let buf
+  try { buf = Buffer.from(String(data || ''), 'base64') } catch { buf = null }
+  if (!buf || !buf.length) return res.status(400).json({ error: 'empty file' })
+  if (buf.length > 200e6) return res.status(400).json({ error: 'file too large (max 200MB before compression)' })
+  const raw = path.join(MEDIA_DIR, 'vid-' + Date.now() + '-raw.' + ext)
+  fs.writeFileSync(raw, buf)
+  const id = crypto.randomUUID()
+  ytJobs.set(id, { id, url: clean, status: 'queued', percent: 100, error: '', created: Date.now(), updated: Date.now() })
+  for (const [k, j] of ytJobs) { if (Date.now() - j.created > 3600000) ytJobs.delete(k) }
+  res.json({ ok: true, queued: true, job: id })
+  prepareUploadedVideo(id, raw)
+    .catch(err => {
+      ytJobSet(id, { status: 'failed', error: err.message })
+      console.error('video prepare failed:', clean, '-', err.message)
+    })
+})
+
 /* The extractor is yt-dlp, fetched on first use and self-updated weekly - the
    pure-JS libraries (ytdl-core & friends) all break whenever YouTube changes
    its player, yt-dlp is the one that keeps recovering. */
@@ -948,6 +971,37 @@ async function ffmpegBin() {
   return (ffmpegResolved = local)
 }
 
+/* WhatsApp-friendly re-encode: 640px wide, H.264 crf 28, AAC 96k, faststart. Returns the size. */
+async function compressVideo(jobId, ffmpegPath, raw, out) {
+  ytJobSet(jobId, { status: 'compressing', percent: 100 })
+  await new Promise((resolve, reject) => {
+    const p = spawn(ffmpegPath, ['-y', '-i', raw,
+      '-vf', "scale='min(640,iw)':-2", '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast',
+      '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', out])
+    p.on('close', c => c === 0 ? resolve() : reject(new Error('ffmpeg exited ' + c)))
+    p.on('error', e => reject(new Error('ffmpeg spawn failed on ' + process.arch + ' (' + ffmpegPath + '): ' + e.message)))
+  })
+  const size = fs.statSync(out).size
+  if (size > 50 * 1024 * 1024) throw new Error('still over 50MB after compression (' + Math.round(size / 1e6) + 'MB) - video too long')
+  return size
+}
+
+/* An uploaded video file: compress the same way and keep it as an upload (media://up_...). */
+async function prepareUploadedVideo(jobId, rawPath) {
+  const ffmpegPath = await ffmpegBin()
+  const out = path.join(MEDIA_DIR, 'vid-' + Date.now() + '.mp4')
+  try {
+    const size = await compressVideo(jobId, ffmpegPath, rawPath, out)
+    const file = 'up_' + Date.now() + '_video.mp4'
+    fs.renameSync(out, path.join(MEDIA_DIR, file))
+    ytJobSet(jobId, { status: 'ready', media: 'media://' + file, bytes: size })
+    console.log('uploaded video prepared:', Math.round(size / 1e6) + 'MB ->', file)
+  } finally {
+    fs.rmSync(rawPath, { force: true })
+    fs.rmSync(out, { force: true })
+  }
+}
+
 /* Download (yt-dlp, <=720p) and compress (ffmpeg, 640px, crf 28) a YouTube link.
    Returns the paths; the caller decides whether to send it now or keep it. */
 async function ytPrepareFile(jobId, url) {
@@ -972,16 +1026,7 @@ async function ytPrepareFile(jobId, url) {
       p.on('close', c => c === 0 ? resolve() : reject(new Error('yt-dlp exited ' + c + ': ' + errOut.slice(-300))))
       p.on('error', reject)
     })
-    ytJobSet(jobId, { status: 'compressing', percent: 100 })
-    await new Promise((resolve, reject) => {
-      const p = spawn(ffmpegPath, ['-y', '-i', raw,
-        '-vf', "scale='min(640,iw)':-2", '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast',
-        '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', out])
-      p.on('close', c => c === 0 ? resolve() : reject(new Error('ffmpeg exited ' + c)))
-      p.on('error', e => reject(new Error('ffmpeg spawn failed on ' + process.arch + ' (' + ffmpegPath + '): ' + e.message)))
-    })
-    const size = fs.statSync(out).size
-    if (size > 50 * 1024 * 1024) throw new Error('still over 50MB after compression (' + Math.round(size / 1e6) + 'MB) - video too long')
+    const size = await compressVideo(jobId, ffmpegPath, raw, out)
     return { raw, out, size }
   } catch (e) {
     fs.rmSync(raw, { force: true })
