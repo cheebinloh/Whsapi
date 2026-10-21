@@ -73,6 +73,7 @@ export function extractText(message) {
     || message.videoMessage?.caption
     || message.documentMessage?.caption
     || message.documentMessage?.fileName
+    || message.reactionMessage?.text   // the emoji; '' = reaction removed
     || ''
 }
 
@@ -162,6 +163,7 @@ db.exec(`
 `)
 try { db.exec('ALTER TABLE messages ADD COLUMN from_me INTEGER DEFAULT 0') } catch { /* column exists */ }
 try { db.exec("ALTER TABLE messages ADD COLUMN media TEXT DEFAULT ''; ALTER TABLE messages ADD COLUMN raw TEXT DEFAULT ''") } catch { /* columns exist */ }
+try { db.exec("ALTER TABLE messages ADD COLUMN react_to TEXT DEFAULT ''") } catch { /* column exists */ }   // reactions: id of the message reacted to
 db.exec(`
   CREATE TABLE IF NOT EXISTS contacts (
     jid       TEXT PRIMARY KEY,
@@ -189,8 +191,8 @@ function upsertContact(jid, name) {
   try { upsertContactStmt.run(jid, name || '') } catch (err) { console.error('contact upsert failed:', err.message) }
 }
 const insertMsg = db.prepare(`
-  INSERT INTO messages (id, sender, chat, is_group, name, type, text, timestamp, from_me, raw)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO messages (id, sender, chat, is_group, name, type, text, timestamp, from_me, raw, react_to)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET raw = excluded.raw WHERE messages.raw = '' AND excluded.raw <> ''
 `)
 
@@ -223,7 +225,7 @@ function postWebhook(event, data) {
 
 function saveMessage(msg, { webhook = true } = {}) {
   try {
-    insertMsg.run(msg.id, msg.from, msg.chat, msg.isGroup ? 1 : 0, msg.name, msg.type, msg.text, msg.timestamp, msg.fromMe ? 1 : 0, msg.raw || '')
+    insertMsg.run(msg.id, msg.from, msg.chat, msg.isGroup ? 1 : 0, msg.name, msg.type, msg.text, msg.timestamp, msg.fromMe ? 1 : 0, msg.raw || '', msg.reactTo || '')
   } catch (err) {
     console.error('db insert failed:', err.message)
     return
@@ -245,7 +247,7 @@ function rowToMsg(r) {
   return {
     seq: r.seq, id: r.id, from: r.sender, chat: r.chat, isGroup: !!r.is_group, fromMe: !!r.from_me,
     name: r.name, type: r.type, text: r.text, timestamp: r.timestamp,
-    hasMedia: !!(r.media || r.raw)
+    hasMedia: !!(r.media || r.raw), reactTo: r.react_to || ''
   }
 }
 
@@ -290,6 +292,7 @@ async function waMessageToRecord(m) {
     type,
     text: extractText(m.message),
     timestamp: Number(m.messageTimestamp) * 1000,
+    reactTo: m.message.reactionMessage?.key?.id || '',
     // keep download keys for media so the file can be fetched on demand later
     raw: MEDIA_TYPES.has(type) ? JSON.stringify({ key: m.key, message: m.message }) : ''
   }
@@ -834,6 +837,24 @@ app.post('/send', async (req, res) => {
       if (!secret) console.error('poll sent without messageSecret — votes will not decrypt')
     }
     res.json({ ok: true, id: result.key.id, to: jidToNumber(jid), poll: !!pollValues })
+  } catch (err) {
+    res.status(err.message.includes('"to"') ? 400 : 500).json({ error: err.message })
+  }
+})
+
+/* POST /react {to, id, fromMe, emoji} - react to a message in a chat, like a
+   long-press in WhatsApp; an empty emoji takes the reaction off again. */
+app.post('/react', async (req, res) => {
+  if (connectionState !== 'connected') return res.status(503).json({ error: 'whatsapp not connected', state: connectionState })
+  try {
+    const { to, id, fromMe, emoji, participant } = req.body || {}
+    if (!id) return res.status(400).json({ error: 'provide the message "id"' })
+    const jid = toJid(to)
+    const key = { remoteJid: jid, id: String(id), fromMe: fromMe === true || String(fromMe) === '1' }
+    if (participant) key.participant = toJid(participant)
+    const result = await sock.sendMessage(jid, { react: { text: String(emoji || ''), key } })
+    rememberApiSend(result.key.id)
+    res.json({ ok: true, id: result.key.id })
   } catch (err) {
     res.status(err.message.includes('"to"') ? 400 : 500).json({ error: err.message })
   }

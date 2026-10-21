@@ -13,6 +13,8 @@ assert.equal(jidToNumber('60123456789:12@s.whatsapp.net'), '60123456789')
 assert.equal(jidToNumber('12345@g.us'), '12345@g.us')
 
 assert.equal(extractText({ conversation: 'hi' }), 'hi')
+assert.equal(extractText({ reactionMessage: { text: '❤️', key: { id: 'X' } } }), '❤️')
+assert.equal(extractText({ reactionMessage: { text: '', key: { id: 'X' } } }), '')
 assert.equal(extractText({ extendedTextMessage: { text: 'yo' } }), 'yo')
 assert.equal(extractText({ imageMessage: { caption: 'pic' } }), 'pic')
 assert.equal(extractText(null), '')
