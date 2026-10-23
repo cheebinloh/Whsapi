@@ -87,6 +87,11 @@
   .ric.on { background: var(--active); color: var(--wa-green); }
   .ric svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   #rail .spacer { flex: 1; }
+  /* broadcast numbers: one letter button each in the rail */
+  .ric.acct { font-size: 15px; font-weight: 600; color: var(--muted); border: 1.5px solid var(--line); position: relative; }
+  .ric.acct .st { position: absolute; right: 2px; bottom: 2px; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); border: 2px solid var(--rail); }
+  .ric.acct .st.ok { background: var(--wa-green); }
+  #acctcard img { border-radius: 10px; background: #fff; padding: 14px; margin: 14px 0; display: block; }
   #rail .avatar { width: 38px; height: 38px; cursor: pointer; margin-top: 6px; }
 
   #side { width: 400px; min-width: 300px; background: var(--bg); border-right: 1px solid var(--line);
@@ -176,7 +181,7 @@
   #app.locked #side { display: none; }
   #app.locked #rail .ric[data-view="chats"],
   #app.locked #rail .ric[data-view="docs"],
-  #app.locked #rail .avatar { display: none; }
+  #app.locked #rail .avatar, #app.locked #acctrail, #app.locked .ric[data-view="acctnew"] { display: none; }
   .setup-banner { background: rgba(0,168,132,.12); border: 1px solid var(--accent); border-radius: 12px;
                   padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .setup-banner .txt { flex: 1; min-width: 240px; }
@@ -261,6 +266,10 @@
     <button class="ric" data-view="link" title="Link device" onclick="showView('link')">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17.5 17.5h.01M20 20v.01"/></svg>
     </button>
+    <div id="acctrail" style="display:contents"></div>
+    <button class="ric" data-view="acctnew" title="Add a broadcast number" onclick="showView('acctnew')">
+      <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
     <div class="spacer"></div>
     <button class="ric" data-view="docs" title="API docs" onclick="showView('docs')">
       <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
@@ -313,6 +322,38 @@
       <div class="page">
         <div class="page-head"><h2>Link device</h2><p>Connect this API to your WhatsApp account.</p></div>
         <div class="page-inner"><div class="section" id="linkcard"></div><div class="powered">Powered by <b>JSNDEV</b></div></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-acct">
+      <div class="page">
+        <div class="page-head"><h2 id="accttitle">Broadcast number</h2><p>Only sends broadcasts. A customer's reply comes into the system only when this number broadcast to them - every other chat on this phone stays out. The main number sends everything after the reply.</p></div>
+        <div class="page-inner">
+          <div class="section" id="acctcard"></div>
+          <div class="section">
+            <h3>Name</h3>
+            <div class="row" style="margin-top:4px"><input id="acctname" maxlength="30" style="flex:1"><button onclick="renameAcct()">Save</button></div>
+          </div>
+          <div class="section">
+            <h3>Remove</h3>
+            <div class="desc">Unlinks the phone and removes this number from the server. Messages already in the system stay.</div>
+            <div class="row"><button class="danger" onclick="removeAcct()">Remove this number</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="view" id="view-acctnew">
+      <div class="page">
+        <div class="page-head"><h2>Add a broadcast number</h2><p>Up to 4 extra numbers next to the main one. Give it a name, then scan its QR with that phone.</p></div>
+        <div class="page-inner">
+          <div class="section">
+            <h3>Name</h3>
+            <div class="desc">Shown in the broadcast page and the inbox, e.g. "B" or "Broadcast 1".</div>
+            <div class="row" style="margin-top:4px"><input id="acctnewname" maxlength="30" style="flex:1" placeholder="B"><button onclick="addAcct()">Add &amp; show QR</button></div>
+            <div class="desc" id="acctnewerr" style="color:var(--danger)"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -900,7 +941,7 @@ async function loadMsgs() {
       ${isPoll(m.type) ? pollHtml(m.text) : ''}
       ${!isPoll(m.type) && m.text && m.type !== 'documentMessage' ? esc(m.text) : ''}
       ${!isPoll(m.type) && !m.text && !m.hasMedia ? '<span class="media-label">[' + esc(m.type).replace('Message', '') + ']</span>' : ''}
-      <span class="t">${fmtTime(m.timestamp)}</span>
+      <span class="t">${m.accountName ? 'via ' + esc(m.accountName) + ' · ' : ''}${fmtTime(m.timestamp)}</span>
     </div>`).join('')
   if (stick) el.scrollTop = el.scrollHeight
   // images load after render and grow the content — keep pinned to the bottom while near it
@@ -970,7 +1011,45 @@ async function unlink() {
   showView('link')
 }
 
-const VIEW_TITLES = { chats: 'Chats', link: 'Link device', settings: 'Settings', docs: 'API docs' }
+/* ---- broadcast numbers ---- */
+let accts = [], acctOpen = '', acctTimer = null
+async function loadAccts() {
+  const r = await api('/accounts' + (currentView === 'acct' ? '?qr=1' : ''))
+  accts = r.accounts || []
+  $('acctrail').innerHTML = accts.map(a => `<button class="ric acct${currentView === 'acct' && acctOpen === a.id ? ' on' : ''}" title="${esc(a.name)} · ${esc(a.number ? '+' + a.number : a.state.replaceAll('_', ' '))}" onclick="openAcct('${a.id}')">${esc([...a.name][0] || '#')}<span class="st${a.state === 'connected' ? ' ok' : ''}"></span></button>`).join('')
+  document.querySelector('.ric[data-view="acctnew"]').style.display = accts.length >= (r.max || 4) ? 'none' : ''
+  if (currentView === 'acct') renderAcct()
+}
+function openAcct(id) { acctOpen = id; showView('acct') }
+function renderAcct() {
+  const a = accts.find(x => x.id === acctOpen)
+  if (!a) { showView('chats'); return }
+  $('accttitle').textContent = a.name
+  if (document.activeElement !== $('acctname')) $('acctname').value = a.name
+  $('acctcard').innerHTML = a.state === 'connected'
+    ? `<h3>Linked ✓</h3><div class="desc">Sending as <span class="mono">+${esc(a.number)}</span>.</div>`
+    : a.qr
+      ? `<h3>Scan with the ${esc(a.name)} phone</h3><div class="desc">On that phone: WhatsApp → Settings → Linked devices → Link a device.</div><img src="${a.qr}" width="264" height="264" alt="QR code">`
+      : `<h3>Waiting for QR…</h3><div class="desc">State: ${esc(a.state.replaceAll('_', ' '))}. This refreshes automatically.</div>`
+}
+async function addAcct() {
+  const r = await api('/accounts', { method: 'POST', body: JSON.stringify({ name: $('acctnewname').value }) })
+  if (r.error) { $('acctnewerr').textContent = r.error; return }
+  $('acctnewname').value = ''; $('acctnewerr').textContent = ''
+  openAcct(r.id)
+}
+async function renameAcct() {
+  await api('/accounts/' + acctOpen, { method: 'POST', body: JSON.stringify({ name: $('acctname').value }) })
+  $('acctname').blur(); loadAccts()
+}
+async function removeAcct() {
+  const a = accts.find(x => x.id === acctOpen)
+  if (!a || !confirm('Remove ' + a.name + '? The phone is unlinked and this number stops sending broadcasts.')) return
+  await api('/accounts/' + acctOpen + '/remove', { method: 'POST' })
+  showView('chats'); loadAccts()
+}
+
+const VIEW_TITLES = { chats: 'Chats', link: 'Link device', settings: 'Settings', docs: 'API docs', acct: 'Broadcast number', acctnew: 'Add number' }
 let currentView = 'chats'
 function showView(v) {
   // while not linked, only the link and settings screens are reachable
@@ -980,8 +1059,9 @@ function showView(v) {
   document.querySelectorAll('#main > .view').forEach(x => x.classList.toggle('on', x.id === 'view-' + v))
   $('app').classList.toggle('fullpage', v !== 'chats') // pages take the whole width
   $('sidetitle').textContent = VIEW_TITLES[v] || 'Chats'
-  clearInterval(qrTimer)
+  clearInterval(qrTimer); clearInterval(acctTimer)
   if (v === 'link') { pollQR(); qrTimer = setInterval(pollQR, 3000) }
+  if (v === 'acct') { loadAccts(); acctTimer = setInterval(loadAccts, 3000) } else loadAccts()
   if (v === 'settings') { loadSettings(); $('setupbanner').style.display = $('app').classList.contains('locked') ? 'flex' : 'none' }
   if (v === 'docs') $('docbase').textContent = location.origin
 }
@@ -989,10 +1069,10 @@ function showView(v) {
 function boot() {
   $('login').style.display = 'none'
   $('app').classList.add('on')
-  refreshStatus(); loadChats()
+  refreshStatus(); loadChats(); loadAccts()
   clearInterval(pollTimer)
   checkNewMessages()
-  pollTimer = setInterval(() => { refreshStatus(); loadChats(); loadMsgs(); checkNewMessages() }, 4000)
+  pollTimer = setInterval(() => { refreshStatus(); loadChats(); loadMsgs(); checkNewMessages(); if (currentView !== 'acct') loadAccts() }, 4000)
 }
 
 // the key is embedded in the page by the server — the app never asks for it

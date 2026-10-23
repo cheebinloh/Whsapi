@@ -164,6 +164,9 @@ db.exec(`
 try { db.exec('ALTER TABLE messages ADD COLUMN from_me INTEGER DEFAULT 0') } catch { /* column exists */ }
 try { db.exec("ALTER TABLE messages ADD COLUMN media TEXT DEFAULT ''; ALTER TABLE messages ADD COLUMN raw TEXT DEFAULT ''") } catch { /* columns exist */ }
 try { db.exec("ALTER TABLE messages ADD COLUMN react_to TEXT DEFAULT ''") } catch { /* column exists */ }   // reactions: id of the message reacted to
+try { db.exec("ALTER TABLE messages ADD COLUMN account TEXT DEFAULT ''") } catch { /* column exists */ }    // '' = main number, else a broadcast number's id
+// numbers a broadcast number was asked to send to - the only chats it lets into the system
+db.exec('CREATE TABLE IF NOT EXISTS sent_to (account TEXT, number TEXT, at INTEGER, PRIMARY KEY (account, number))')
 db.exec(`
   CREATE TABLE IF NOT EXISTS contacts (
     jid       TEXT PRIMARY KEY,
@@ -191,8 +194,8 @@ function upsertContact(jid, name) {
   try { upsertContactStmt.run(jid, name || '') } catch (err) { console.error('contact upsert failed:', err.message) }
 }
 const insertMsg = db.prepare(`
-  INSERT INTO messages (id, sender, chat, is_group, name, type, text, timestamp, from_me, raw, react_to)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO messages (id, sender, chat, is_group, name, type, text, timestamp, from_me, raw, react_to, account)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET raw = excluded.raw WHERE messages.raw = '' AND excluded.raw <> ''
 `)
 
@@ -225,7 +228,7 @@ function postWebhook(event, data) {
 
 function saveMessage(msg, { webhook = true } = {}) {
   try {
-    insertMsg.run(msg.id, msg.from, msg.chat, msg.isGroup ? 1 : 0, msg.name, msg.type, msg.text, msg.timestamp, msg.fromMe ? 1 : 0, msg.raw || '', msg.reactTo || '')
+    insertMsg.run(msg.id, msg.from, msg.chat, msg.isGroup ? 1 : 0, msg.name, msg.type, msg.text, msg.timestamp, msg.fromMe ? 1 : 0, msg.raw || '', msg.reactTo || '', msg.account || '')
   } catch (err) {
     console.error('db insert failed:', err.message)
     return
@@ -235,6 +238,8 @@ function saveMessage(msg, { webhook = true } = {}) {
   if (webhook) {
     const { raw, ...payload } = msg // keep media download keys internal
     payload.hasMedia = !!raw
+    payload.account = msg.account || ''
+    payload.accountName = accountName(msg.account)
     payload.viaApi = apiSentIds.has(msg.id)
     postWebhook('message', payload)
   }
@@ -247,7 +252,8 @@ function rowToMsg(r) {
   return {
     seq: r.seq, id: r.id, from: r.sender, chat: r.chat, isGroup: !!r.is_group, fromMe: !!r.from_me,
     name: r.name, type: r.type, text: r.text, timestamp: r.timestamp,
-    hasMedia: !!(r.media || r.raw), reactTo: r.react_to || ''
+    hasMedia: !!(r.media || r.raw), reactTo: r.react_to || '',
+    account: r.account || '', accountName: accountName(r.account)
   }
 }
 
@@ -259,12 +265,12 @@ let connectionState = 'connecting'
 let groupNames = {} // jid -> subject, refreshed on connect
 
 // resolve a possibly-LID jid to a plain phone number using the alt field or the lid mapping store
-async function resolveNumber(jid, altJid) {
+async function resolveNumber(jid, altJid, s = sock) {
   if (!jid) return null
   if (jid.endsWith('@lid')) {
     if (altJid) return jidToNumber(altJid)
     try {
-      const pn = await sock.signalRepository.lidMapping.getPNForLID(jid)
+      const pn = await s.signalRepository.lidMapping.getPNForLID(jid)
       if (pn) return jidToNumber(pn)
     } catch { /* mapping unknown */ }
     return jid // couldn't resolve, return raw lid
@@ -273,14 +279,14 @@ async function resolveNumber(jid, altJid) {
 }
 
 // converts a raw Baileys WAMessage into our stored record shape (null if not storable)
-async function waMessageToRecord(m) {
+async function waMessageToRecord(m, s = sock) {
   if (!m.message || !m.key.remoteJid || m.key.remoteJid === 'status@broadcast') return null
   const chatJid = m.key.remoteJid
   const isGroup = chatJid.endsWith('@g.us')
   const senderJid = isGroup ? (m.key.participant || chatJid) : chatJid
   const senderAlt = isGroup ? (m.key.participantAlt || m.key.participantPn) : (m.key.remoteJidAlt || m.key.senderPn)
-  const senderNumber = await resolveNumber(senderJid, senderAlt)
-  const chat = isGroup ? chatJid : await resolveNumber(chatJid, m.key.remoteJidAlt || m.key.senderPn)
+  const senderNumber = await resolveNumber(senderJid, senderAlt, s)
+  const chat = isGroup ? chatJid : await resolveNumber(chatJid, m.key.remoteJidAlt || m.key.senderPn, s)
   const type = messageType(m.message)
   return {
     id: m.key.id,
@@ -377,7 +383,7 @@ async function startWhatsApp() {
    selected option back to its 1-based number, and store/webhook it exactly as
    if the customer had typed that number. Vote *changes* come through the same
    way; retractions (nothing selected) are ignored. */
-async function handlePollVote(m) {
+async function handlePollVote(m, s = sock, account = '') {
   const pu = m.message.pollUpdateMessage
   const pollId = pu.pollCreationMessageKey && pu.pollCreationMessageKey.id
   const row = pollId ? db.prepare('SELECT * FROM polls WHERE id = ?').get(pollId) : null
@@ -386,7 +392,7 @@ async function handlePollVote(m) {
   /* The vote is AES-keyed on (secret, poll id, creator jid, voter jid) — and
      with Baileys 7's LID addressing either side may be known to WhatsApp by
      its LID rather than its phone jid. Try every combination we hold. */
-  const creators = [jidNormalizedUser(sock.user.id), sock.user.lid && jidNormalizedUser(sock.user.lid)].filter(Boolean)
+  const creators = [jidNormalizedUser(s.user.id), s.user.lid && jidNormalizedUser(s.user.lid)].filter(Boolean)
   const voters = [m.key.remoteJid, m.key.remoteJidAlt, m.key.participant, m.key.participantAlt, m.key.senderPn]
     .filter(Boolean)
   let choice = null
@@ -425,8 +431,80 @@ async function handlePollVote(m) {
     type: 'poll_vote',
     text: String(choice),   // downstream sees "1"/"2"… — identical to a typed pick
     timestamp: Number(m.messageTimestamp) * 1000,
-    raw: ''
+    raw: '',
+    account
   })
+}
+
+// ---------- broadcast numbers ----------
+
+/* Extra WhatsApp numbers that only send broadcasts. They keep no history: a
+   customer's message is let in (stored + webhooked) only from a number this
+   account was asked to send to through POST /send - every other chat on that
+   phone stays out of the system. Replies go out from the main number. */
+const ACCOUNTS_FILE = path.join(BASE_DIR, 'accounts.json')
+const MAX_EXTRA = 4   // + the main number = 5
+const extras = new Map()   // id -> { id, name, sock, state, qr }
+const sentToGet = db.prepare('SELECT 1 FROM sent_to WHERE account = ? AND number = ?')
+const sentToPut = db.prepare('INSERT OR REPLACE INTO sent_to (account, number, at) VALUES (?, ?, ?)')
+
+function accountName(id) { return id ? (extras.get(id)?.name || id) : '' }
+function saveAccounts() {
+  fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify([...extras.values()].map(a => ({ id: a.id, name: a.name })), null, 2))
+}
+function loadAccounts() {
+  let list = []
+  try { list = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8')) } catch { /* none yet */ }
+  for (const a of list) {
+    const acc = { id: a.id, name: a.name, sock: null, state: 'connecting', qr: null }
+    extras.set(acc.id, acc)
+    startExtra(acc)
+  }
+}
+const extraAuthDir = id => path.join(BASE_DIR, 'auth-' + id)
+
+async function startExtra(acc) {
+  const { state, saveCreds } = await useMultiFileAuthState(extraAuthDir(acc.id))
+  const s = makeWASocket({ auth: state, logger: pino({ level: 'warn' }), syncFullHistory: false, shouldSyncHistoryMessage: () => false })
+  acc.sock = s
+  s.ev.on('creds.update', saveCreds)
+  s.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    if (acc.sock !== s) return   // removed or restarted meanwhile
+    if (qr) { acc.qr = qr; acc.state = 'waiting_for_qr_scan' }
+    if (connection === 'open') { acc.qr = null; acc.state = 'connected'; console.log('Broadcast number ' + acc.name + ' connected') }
+    if (connection === 'close') {
+      if (lastDisconnect?.error?.output?.statusCode === DisconnectReason.loggedOut) {
+        acc.state = 'logged_out'
+        fs.rmSync(extraAuthDir(acc.id), { recursive: true, force: true })
+      } else acc.state = 'reconnecting'
+      if (extras.get(acc.id) === acc) setTimeout(() => { if (extras.get(acc.id) === acc) startExtra(acc) }, 3000)
+    }
+  })
+  s.ev.on('messages.upsert', async ({ messages: msgs, type }) => {
+    if (type !== 'notify') return   // own sends are stored by POST /send itself; a human typing on this phone stays out
+    for (const m of msgs) {
+      if (m.key.fromMe) continue
+      try {
+        if (m.message?.pollUpdateMessage) { await handlePollVote(m, s, acc.id); continue }
+        const rec = await waMessageToRecord(m, s)
+        if (!rec || rec.isGroup) continue
+        if (!sentToGet.get(acc.id, rec.chat)) {
+          if (String(rec.chat).endsWith('@lid')) console.log('Broadcast number ' + acc.name + ': dropped a message from an unresolved ' + rec.chat)
+          continue   // never broadcast to from this number: not ours to see
+        }
+        rec.account = acc.id
+        saveMessage(rec)
+      } catch (err) { console.error('broadcast number ' + acc.name + ' message failed:', err.message) }
+    }
+  })
+}
+
+/* which socket sends: '' = main, else a broadcast number's id (null = unknown id) */
+function pickAccount(id) {
+  id = String(id || '')
+  if (!id) return { id: '', sock, state: connectionState }
+  const a = extras.get(id)
+  return a ? { id, sock: a.sock, state: a.state } : null
 }
 
 // ---------- http api ----------
@@ -780,7 +858,10 @@ function mediaSource(ref) {
 }
 
 app.post('/send', async (req, res) => {
-  if (connectionState !== 'connected') return res.status(503).json({ error: 'whatsapp not connected', state: connectionState })
+  const acc = pickAccount(req.body?.account)
+  if (!acc) return res.status(400).json({ error: 'unknown account' })
+  if (acc.state !== 'connected') return res.status(503).json({ error: 'whatsapp not connected', state: acc.state })
+  const sock = acc.sock   // the rest of this route sends from the chosen number
   try {
     const { to, text, imageUrl, videoUrl, documentUrl, audioUrl, ptt, fileName, caption, poll, typingSeconds } = req.body || {}
     const jid = toJid(to)
@@ -828,6 +909,14 @@ app.post('/send', async (req, res) => {
     }
     const result = await sock.sendMessage(jid, content)
     rememberApiSend(result.key.id)   // so the webhook flags this send as viaApi, not a human reply
+    if (acc.id) {
+      // a broadcast number: this customer may now reply to it, and the send shows in their chat
+      sentToPut.run(acc.id, jidToNumber(jid), Date.now())
+      const t = messageType(result.message)
+      saveMessage({ id: result.key.id, from: 'me', chat: jidToNumber(jid), isGroup: false, fromMe: true, name: '', type: t,
+        text: extractText(result.message), timestamp: Date.now(), account: acc.id,
+        raw: MEDIA_TYPES.has(t) ? JSON.stringify({ key: result.key, message: result.message }) : '' })
+    }
     if (pollValues) {
       // keep the poll's encryption secret, or the votes can never be read back
       const secret = result.message && result.message.messageContextInfo && result.message.messageContextInfo.messageSecret
@@ -836,10 +925,54 @@ app.post('/send', async (req, res) => {
              secret ? Buffer.from(secret).toString('base64') : '', Date.now())
       if (!secret) console.error('poll sent without messageSecret — votes will not decrypt')
     }
-    res.json({ ok: true, id: result.key.id, to: jidToNumber(jid), poll: !!pollValues })
+    res.json({ ok: true, id: result.key.id, to: jidToNumber(jid), poll: !!pollValues, account: acc.id })
   } catch (err) {
     res.status(err.message.includes('"to"') ? 400 : 500).json({ error: err.message })
   }
+})
+
+// GET /accounts - the broadcast numbers: { accounts: [{id, name, state, number, qr}] }, qr (data url) only with ?qr=1 while waiting for a scan
+app.get('/accounts', async (req, res) => {
+  const accounts = []
+  for (const a of extras.values()) {
+    accounts.push({ id: a.id, name: a.name, state: a.state,
+      number: a.sock?.user ? jidToNumber(jidNormalizedUser(a.sock.user.id)) : '',
+      qr: a.qr && req.query.qr ? await QRCode.toDataURL(a.qr, { width: 300 }) : null })
+  }
+  res.json({ accounts, max: MAX_EXTRA })
+})
+
+// POST /accounts {name} - add a broadcast number, then scan its QR
+app.post('/accounts', (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 30)
+  if (!name) return res.status(400).json({ error: 'give the number a name' })
+  if (extras.size >= MAX_EXTRA) return res.status(400).json({ error: 'at most ' + MAX_EXTRA + ' broadcast numbers' })
+  const acc = { id: crypto.randomBytes(4).toString('hex'), name, sock: null, state: 'connecting', qr: null }
+  extras.set(acc.id, acc)
+  saveAccounts()
+  startExtra(acc)
+  res.json({ ok: true, id: acc.id })
+})
+
+// POST /accounts/:id {name} - rename
+app.post('/accounts/:id', (req, res) => {
+  const a = extras.get(req.params.id)
+  const name = String(req.body?.name || '').trim().slice(0, 30)
+  if (!a || !name) return res.status(400).json({ error: 'unknown number or empty name' })
+  a.name = name
+  saveAccounts()
+  res.json({ ok: true })
+})
+
+// POST /accounts/:id/remove - unlink the phone and forget the number (its stored messages stay)
+app.post('/accounts/:id/remove', async (req, res) => {
+  const a = extras.get(req.params.id)
+  if (!a) return res.status(404).json({ error: 'unknown number' })
+  extras.delete(a.id)
+  saveAccounts()
+  try { await a.sock?.logout() } catch { /* already gone */ }
+  fs.rmSync(extraAuthDir(a.id), { recursive: true, force: true })
+  res.json({ ok: true })
 })
 
 /* POST /react {to, id, fromMe, emoji} - react to a message in a chat, like a
@@ -1117,6 +1250,7 @@ export function startServer() {
   WEBHOOK_SECRET = ensureSecret('WEBHOOK_SECRET', WEBHOOK_SECRET)
   app.listen(PORT, () => console.log('API on http://localhost:' + PORT + '  (open /qr?key=... to link)'))
   startWhatsApp()
+  loadAccounts()
   // heartbeat: lets the receiver run timed flow steps (waits/timeouts) and keep
   // its learned bridge address fresh, without any cron on the PHP side
   setInterval(() => postWebhook('tick', { state: connectionState }), 30000)
