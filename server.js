@@ -814,7 +814,7 @@ app.get('/media/:id', async (req, res) => {
 /* Media uploaded from the flow builder (via oc), stored beside the session
    that will send it. base64-in-JSON keeps the bridge dependency-free. */
 const UPLOAD_EXT = {
-  jpg: 'image', jpeg: 'image', png: 'image', webp: 'image', gif: 'image', mp4: 'video',
+  jpg: 'image', jpeg: 'image', png: 'image', webp: 'image', gif: 'image', mp4: 'video', mov: 'video', m4v: 'video',
   ogg: 'audio', webm: 'audio', opus: 'audio', m4a: 'audio', mp3: 'audio', aac: 'audio',
   pdf: 'document', doc: 'document', docx: 'document', xls: 'document', xlsx: 'document',
   ppt: 'document', pptx: 'document', txt: 'document', csv: 'document', zip: 'document'
