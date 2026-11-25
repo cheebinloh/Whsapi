@@ -1,4 +1,4 @@
-﻿import makeWASocket, { useMultiFileAuthState, DisconnectReason, jidNormalizedUser, downloadMediaMessage, proto, decryptPollVote } from '@whiskeysockets/baileys'
+﻿import makeWASocket, { useMultiFileAuthState, DisconnectReason, jidNormalizedUser, downloadMediaMessage, proto, decryptPollVote, normalizeMessageContent } from '@whiskeysockets/baileys'
 import express from 'express'
 import pino from 'pino'
 import QRCode from 'qrcode'
@@ -287,7 +287,10 @@ async function waMessageToRecord(m, s = sock) {
   const senderAlt = isGroup ? (m.key.participantAlt || m.key.participantPn) : (m.key.remoteJidAlt || m.key.senderPn)
   const senderNumber = await resolveNumber(senderJid, senderAlt, s)
   const chat = isGroup ? chatJid : await resolveNumber(chatJid, m.key.remoteJidAlt || m.key.senderPn, s)
-  const type = messageType(m.message)
+  // disappearing-message chats and view-once wrap the real content (ephemeralMessage.message.imageMessage...);
+  // unwrap it or a bank-in slip lands as an empty 'ephemeralMessage'
+  const msg = normalizeMessageContent(m.message) || m.message
+  const type = messageType(msg)
   return {
     id: m.key.id,
     from: m.key.fromMe ? 'me' : senderNumber,
@@ -296,11 +299,11 @@ async function waMessageToRecord(m, s = sock) {
     fromMe: !!m.key.fromMe,
     name: m.pushName || '',
     type,
-    text: extractText(m.message),
+    text: extractText(msg),
     timestamp: Number(m.messageTimestamp) * 1000,
-    reactTo: m.message.reactionMessage?.key?.id || '',
+    reactTo: msg.reactionMessage?.key?.id || '',
     // keep download keys for media so the file can be fetched on demand later
-    raw: MEDIA_TYPES.has(type) ? JSON.stringify({ key: m.key, message: m.message }) : ''
+    raw: MEDIA_TYPES.has(type) ? JSON.stringify({ key: m.key, message: msg }) : ''
   }
 }
 
